@@ -5,6 +5,10 @@ on:
     tags:
       - "*"
 
+permissions:
+  contents: write
+  packages: write
+
 jobs:
 
   release:
@@ -29,11 +33,11 @@ jobs:
 
       - name: Setup release environment
         run: |-
-          echo 'GITHUB_TOKEN=${{secrets.GORELEASER_ACCESS_TOKEN}}' > .release-env
+          echo 'GITHUB_TOKEN=${{github.token}}' > .release-env
           echo 'GITHUB_USER=${{github.event.repository.owner.login}}' >> .release-env
           echo 'GITHUB_PROJECT=${{github.event.repository.name}}' >> .release-env
           echo 'DOCKER_CREDS_FILE=.docker-creds' >> .release-env
-          echo '${{github.event.repository.owner.login}}:${{secrets.GORELEASER_ACCESS_TOKEN}}:ghcr.io' >> .docker-creds
+          echo '${{github.event.repository.owner.login}}:${{github.token}}:ghcr.io' >> .docker-creds
 
       - name: Release publish
         run: make release
