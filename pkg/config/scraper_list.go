@@ -26,6 +26,7 @@ type XbvrScrapers struct {
 	StashDbScrapers []ScraperConfig `json:"stashdb"`
 	RealVRScrapers  []ScraperConfig `json:"realvr"`
 	VrpornScrapers  []ScraperConfig `json:"vrporn"`
+	VrsmashScrapers []ScraperConfig `json:"vrsmash"`
 	VrphubScrapers  []ScraperConfig `json:"vrphub"`
 }
 type CustomScrapers struct {
@@ -34,6 +35,7 @@ type CustomScrapers struct {
 	StashDbScrapers []ScraperConfig `json:"stashdb"`
 	RealVRScrapers  []ScraperConfig `json:"realvr"`
 	VrpornScrapers  []ScraperConfig `json:"vrporn"`
+	VrsmashScrapers []ScraperConfig `json:"vrsmash"`
 	VrphubScrapers  []ScraperConfig `json:"vrphub"`
 }
 type ScraperConfig struct {
@@ -78,12 +80,14 @@ func (o *ScraperList) Load() error {
 	SetSiteId(&o.XbvrScrapers.StashDbScrapers, "")
 	SetSiteId(&o.XbvrScrapers.VrphubScrapers, "")
 	SetSiteId(&o.XbvrScrapers.VrpornScrapers, "")
+	SetSiteId(&o.XbvrScrapers.VrsmashScrapers, "")
 	SetSiteId(&o.XbvrScrapers.RealVRScrapers, "")
 	SetSiteId(&o.CustomScrapers.PovrScrapers, "povr")
 	SetSiteId(&o.CustomScrapers.SlrScrapers, "slr")
 	SetSiteId(&o.CustomScrapers.StashDbScrapers, "stashdb")
 	SetSiteId(&o.CustomScrapers.VrphubScrapers, "vrphub")
 	SetSiteId(&o.CustomScrapers.VrpornScrapers, "vrporn")
+	SetSiteId(&o.CustomScrapers.VrsmashScrapers, "vrsmash")
 	SetSiteId(&o.CustomScrapers.RealVRScrapers, "realvr")
 
 	// remove custom sites that are now offical for the same aggregation site
@@ -92,6 +96,7 @@ func (o *ScraperList) Load() error {
 	o.CustomScrapers.StashDbScrapers = RemoveCustomListNowOffical(o.CustomScrapers.StashDbScrapers, o.XbvrScrapers.StashDbScrapers)
 	o.CustomScrapers.VrphubScrapers = RemoveCustomListNowOffical(o.CustomScrapers.VrphubScrapers, o.XbvrScrapers.VrphubScrapers)
 	o.CustomScrapers.VrpornScrapers = RemoveCustomListNowOffical(o.CustomScrapers.VrpornScrapers, o.XbvrScrapers.VrpornScrapers)
+	o.CustomScrapers.VrsmashScrapers = RemoveCustomListNowOffical(o.CustomScrapers.VrsmashScrapers, o.XbvrScrapers.VrsmashScrapers)
 	o.CustomScrapers.RealVRScrapers = RemoveCustomListNowOffical(o.CustomScrapers.RealVRScrapers, o.XbvrScrapers.RealVRScrapers)
 
 	list, err := json.MarshalIndent(o, "", "  ")

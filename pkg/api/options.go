@@ -1116,6 +1116,7 @@ func (i ConfigResource) createCustomSite(req *restful.Request, resp *restful.Res
 	scrapers["stashdb"] = scraperConfig.CustomScrapers.StashDbScrapers
 	scrapers["vrphub"] = scraperConfig.CustomScrapers.VrphubScrapers
 	scrapers["vrporn"] = scraperConfig.CustomScrapers.VrpornScrapers
+	scrapers["vrsmash"] = scraperConfig.CustomScrapers.VrsmashScrapers
 	scrapers["realvr"] = scraperConfig.CustomScrapers.RealVRScrapers
 
 	exists := false
@@ -1144,6 +1145,8 @@ func (i ConfigResource) createCustomSite(req *restful.Request, resp *restful.Res
 			scrapers["vrphub"] = append(scrapers["vrphub"], scraper)
 		case "vrporn":
 			scrapers["vrporn"] = append(scrapers["vrporn"], scraper)
+		case "vrsmash":
+			scrapers["vrsmash"] = append(scrapers["vrsmash"], scraper)
 		case "realvr":
 			scrapers["realvr"] = append(scrapers["realvr"], scraper)
 		}
@@ -1153,6 +1156,7 @@ func (i ConfigResource) createCustomSite(req *restful.Request, resp *restful.Res
 	scraperConfig.CustomScrapers.StashDbScrapers = scrapers["stashdb"]
 	scraperConfig.CustomScrapers.VrphubScrapers = scrapers["vrphub"]
 	scraperConfig.CustomScrapers.VrpornScrapers = scrapers["vrporn"]
+	scraperConfig.CustomScrapers.VrsmashScrapers = scrapers["vrsmash"]
 	scraperConfig.CustomScrapers.RealVRScrapers = scrapers["realvr"]
 	fName := filepath.Join(common.AppDir, "scrapers.json")
 	list, _ := json.MarshalIndent(scraperConfig, "", "  ")
