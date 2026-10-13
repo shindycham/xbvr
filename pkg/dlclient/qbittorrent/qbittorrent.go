@@ -342,21 +342,39 @@ func (c *client) doLogin(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if resp.StatusCode == http.StatusForbidden {
-		return errors.New("qbittorrent: authentication failed (HTTP 403)")
-	}
-	if resp.StatusCode != http.StatusOK {
-		return statusError(baseAuthPath, resp, data)
-	}
-	switch strings.TrimSpace(string(data)) {
-	case "Ok.":
+	// The success signal has changed across versions, so only the failure
+	// signals are treated as authoritative and every other 2xx is accepted:
+	//
+	//   qBittorrent <= 5.1  -> 200 with the body "Ok."
+	//   qBittorrent >= 5.2  -> 204 with an empty body
+	//
+	// Requiring the old "Ok." body made a working 5.2+ setup look like a login
+	// failure. If the credentials really are wrong the following request comes
+	// back 401/403, and call() already re-authenticates and retries once, so a
+	// permissive check here cannot hide a bad password.
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusNoContent, http.StatusResetContent:
+		if strings.TrimSpace(string(data)) == "Fails." {
+			return authError(resp.StatusCode, data)
+		}
 		return nil
-	case "Fails.":
-		return errors.New("qbittorrent: authentication failed: invalid username or password")
-	default:
-		return fmt.Errorf("qbittorrent: authentication failed: unexpected response %q",
-			truncate(data, maxErrorBody))
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return authError(resp.StatusCode, data)
 	}
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	return statusError(baseAuthPath, resp, data)
+}
+
+// authError describes a rejected login, preferring qBittorrent's own wording
+// because it reports an IP ban this way rather than as a credential problem.
+func authError(status int, body []byte) error {
+	message := strings.TrimSpace(string(body))
+	if message == "" || message == "Fails." {
+		return fmt.Errorf("qbittorrent: authentication failed (HTTP %d): check the username and password", status)
+	}
+	return fmt.Errorf("qbittorrent: authentication failed (HTTP %d): %s", status, truncate(body, maxErrorBody))
 }
 
 // call performs one authenticated API call, logging in first when needed and

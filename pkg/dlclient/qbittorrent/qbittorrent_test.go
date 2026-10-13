@@ -860,3 +860,193 @@ func TestNormalizeStateCoversQBittorrent5(t *testing.T) {
 		t.Error("stoppedUP must count as seeding: it is a completed torrent")
 	}
 }
+
+// TestLoginSuccessSignalsAcrossVersions pins the login handshake against the
+// change qBittorrent 5.2 made. Earlier versions answer 200 with the body "Ok.";
+// 5.2 and later answer 204 with no body at all. Requiring the old "Ok." body
+// made a perfectly good 5.2+ setup fail with
+// "unexpected status 204", which is exactly what a user hit.
+func TestLoginSuccessSignalsAcrossVersions(t *testing.T) {
+	cases := []struct {
+		name    string
+		handler http.HandlerFunc
+	}{
+		{
+			name: "qBittorrent <= 5.1: 200 with an Ok. body",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				http.SetCookie(w, &http.Cookie{Name: "SID", Value: testSID, Path: "/"})
+				io.WriteString(w, "Ok.")
+			},
+		},
+		{
+			name: "qBittorrent >= 5.2: 204 with no body",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				http.SetCookie(w, &http.Cookie{Name: "SID", Value: testSID, Path: "/"})
+				w.WriteHeader(http.StatusNoContent)
+			},
+		},
+		{
+			name: "200 with an empty body",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				http.SetCookie(w, &http.Cookie{Name: "SID", Value: testSID, Path: "/"})
+			},
+		},
+		{
+			name: "authentication disabled entirely: 200, no cookie",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				io.WriteString(w, "Ok.")
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/v2/auth/login" {
+					tc.handler(w, r)
+					return
+				}
+				io.WriteString(w, "v5.2.0")
+			}))
+			defer srv.Close()
+
+			if err := newTestClient(t, srv).Test(context.Background()); err != nil {
+				t.Fatalf("Test: %v", err)
+			}
+		})
+	}
+}
+
+func TestLoginFailureSignals(t *testing.T) {
+	t.Run("Fails. body reports the credentials", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			io.WriteString(w, "Fails.")
+		}))
+		defer srv.Close()
+
+		err := newTestClient(t, srv).Test(context.Background())
+		if err == nil {
+			t.Fatal("expected a failure")
+		}
+		if !strings.Contains(err.Error(), "username and password") {
+			t.Errorf("error %q should point at the credentials", err)
+		}
+	})
+
+	t.Run("403 surfaces qBittorrent's own message", func(t *testing.T) {
+		// qBittorrent reports an IP ban as a 403 with an explanatory body, which
+		// is a different problem from a wrong password and must not be hidden.
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusForbidden)
+			io.WriteString(w, "Your IP address has been banned after too many failed authentication attempts.")
+		}))
+		defer srv.Close()
+
+		err := newTestClient(t, srv).Test(context.Background())
+		if err == nil {
+			t.Fatal("expected a failure")
+		}
+		if !strings.Contains(err.Error(), "banned") {
+			t.Errorf("error %q should carry the ban message", err)
+		}
+	})
+}
+
+// TestReloginAfterRejectedSession covers the "403 after accepted login" symptom:
+// the login is accepted but the following call is refused, so the client must
+// re-authenticate once and retry rather than reporting a failure.
+func TestReloginAfterRejectedSession(t *testing.T) {
+	var logins, versionCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			logins++
+			// A 5.2-style login response.
+			w.WriteHeader(http.StatusNoContent)
+		case "/api/v2/app/version":
+			versionCalls++
+			if versionCalls == 1 {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			io.WriteString(w, "v5.2.0")
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	if err := newTestClient(t, srv).Test(context.Background()); err != nil {
+		t.Fatalf("Test: %v", err)
+	}
+	if logins != 2 {
+		t.Errorf("logged in %d times, want 2 (initial plus the retry)", logins)
+	}
+	if versionCalls != 2 {
+		t.Errorf("version called %d times, want 2", versionCalls)
+	}
+}
+
+// TestFullFlowAgainstQBittorrent52 drives the client against a server that
+// behaves like 5.2: the login answers 204, and every other endpoint refuses the
+// request unless the SID cookie from that login is presented. This is the
+// "403 after accepted login" trap, and it proves the session survives the
+// body-less login.
+func TestFullFlowAgainstQBittorrent52(t *testing.T) {
+	const torrents = `[{"hash":"aaa","name":"Release","state":"uploading","progress":1,"size":100,"downloaded":100,"dlspeed":0,"eta":0,"ratio":1.2,"save_path":"/downloads","content_path":"/downloads/Release","tags":"xbvr-ref-1"}]`
+
+	var addCalls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			// 5.2: no body, success signalled by the status alone.
+			http.SetCookie(w, &http.Cookie{Name: "SID", Value: testSID, Path: "/"})
+			w.WriteHeader(http.StatusNoContent)
+
+		case "/api/v2/app/version":
+			if !requireSID(t, w, r) {
+				return
+			}
+			io.WriteString(w, "v5.2.0")
+
+		case "/api/v2/torrents/info":
+			if !requireSID(t, w, r) {
+				return
+			}
+			io.WriteString(w, torrents)
+
+		case "/api/v2/torrents/add":
+			if !requireSID(t, w, r) {
+				return
+			}
+			addCalls++
+			io.WriteString(w, "Ok.")
+
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	c := newTestClient(t, srv)
+	ctx := context.Background()
+
+	if err := c.Test(ctx); err != nil {
+		t.Fatalf("Test: %v", err)
+	}
+
+	jobs, err := c.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(jobs) != 1 || jobs[0].Ref != "ref-1" {
+		t.Fatalf("jobs = %+v, want one with ref-1", jobs)
+	}
+
+	if _, err := c.Add(ctx, dlclient.AddRequest{Ref: "ref-2", Magnet: "magnet:?xt=urn:btih:x"}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if addCalls != 1 {
+		t.Errorf("add called %d times, want 1", addCalls)
+	}
+}
