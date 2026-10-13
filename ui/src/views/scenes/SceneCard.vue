@@ -57,6 +57,7 @@
       <watchlist-button :item="item" v-if="this.$store.state.optionsWeb.web.sceneWatchlist"/>
       <trailerlist-button :item="item" v-if="this.$store.state.optionsWeb.web.sceneTrailerlist"/>
       <slr-download-button :item="item" v-if="isSLRScene && this.$store.state.optionsWeb.web.sceneDownload"/>
+      <grab-search-button :item="item" v-if="this.$store.state.optionsWeb.web.sceneDownload"/>
       <favourite-button :item="item" v-if="this.$store.state.optionsWeb.web.sceneFavourite"/>
       <wishlist-button v-if="this.$store.state.optionsWeb.web.sceneWishlist && !item.is_available" :item="item"/>
       <watched-button :item="item" v-if="this.$store.state.optionsWeb.web.sceneWatched"/>
@@ -97,6 +98,7 @@ import LinkStashdbButton from '../../components/LinkStashdbButton'
 import TrailerlistButton from '../../components/TrailerlistButton'
 import HiddenButton from '../../components/HiddenButton'
 import SLRDownloadButton from '../../components/SLRDownloadButton'
+import GrabSearchButton from '../../components/GrabSearchButton'
 import ky from 'ky'
 import VueLoadImage from 'vue-load-image'
 
@@ -105,7 +107,8 @@ export default {
   props: { item: Object, reRead: Boolean },
   // Registered as SlrDownloadButton so the kebab-case <slr-download-button>
   // tag resolves (Vue camelizes then capitalizes the first letter only).
-  components: { WatchlistButton, FavouriteButton, WishlistButton, WatchedButton, EditButton, LinkStashdbButton, TrailerlistButton, HiddenButton, SlrDownloadButton: SLRDownloadButton, VueLoadImage },
+  // GrabSearchButton camelizes cleanly to <grab-search-button>.
+  components: { WatchlistButton, FavouriteButton, WishlistButton, WatchedButton, EditButton, LinkStashdbButton, TrailerlistButton, HiddenButton, SlrDownloadButton: SLRDownloadButton, GrabSearchButton: GrabSearchButton, VueLoadImage },
   data () {
     return {
       preview: false,

@@ -323,6 +323,10 @@ func (i ConfigResource) WebService() *restful.WebService {
 	ws.Route(ws.PUT("/vrsmash-downloader").To(i.saveOptionsVRSMashDownloader).
 		Metadata(restfulspec.KeyOpenAPITags, tags))
 
+	// "Torrent & NZB" section endpoints
+	ws.Route(ws.PUT("/torrent-nzb").To(i.saveOptionsGrab).
+		Metadata(restfulspec.KeyOpenAPITags, tags))
+
 	// "Web Advanced UI options" section endpoints
 	ws.Route(ws.PUT("/funscripts").To(i.saveOptionsFunscripts).
 		Metadata(restfulspec.KeyOpenAPITags, tags))

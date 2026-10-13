@@ -77,6 +77,12 @@ func StartServer(version, commit, branch, date string) {
 	// Keep the VRsMash session alive when automatic refresh is enabled.
 	vrsmash.StartTokenKeepAlive()
 
+	// Torrent and NZB grabs live in memory, so pick up anything a configured
+	// download client is still working on from before this process started, then
+	// start the loop that polls them.
+	tasks.StartGrabPoller()
+	tasks.AdoptOrphanedGrabs()
+
 	restful.DefaultContainer.EnableContentEncoding(true)
 
 	// API endpoints
@@ -101,6 +107,7 @@ func StartServer(version, commit, branch, date string) {
 	restful.Add(api.ExternalReference{}.WebService())
 	restful.Add(api.InconsistenciesResource{}.WebService())
 	restful.Add(api.DownloadResource{}.WebService())
+	restful.Add(api.GrabResource{}.WebService())
 
 	restConfig := restfulspec.Config{
 		WebServices: restful.RegisteredWebServices(),

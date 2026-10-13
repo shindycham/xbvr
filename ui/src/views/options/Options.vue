@@ -30,6 +30,7 @@
           <b-menu-list :label="$t('Downloads')">
             <b-menu-item :label="$t('SLR Downloader')" :active="active==='slr_downloader'" @click="setActive('slr_downloader')"/>
             <b-menu-item :label="$t('VRSmash Downloader')" :active="active==='vrsmash_downloader'" @click="setActive('vrsmash_downloader')"/>
+            <b-menu-item :label="$t('Torrent & NZB')" :active="active==='torrent_nzb'" @click="setActive('torrent_nzb')"/>
           </b-menu-list>
         </b-menu>
       </div>
@@ -50,6 +51,7 @@
           <InterfaceAdvanced v-show="active==='interface_advanced'"/>
           <SLRDownloader v-show="active==='slr_downloader'"/>
           <VRSMashDownloader v-show="active==='vrsmash_downloader'"/>
+          <TorrentNZB v-show="active==='torrent_nzb'"/>
           <SceneMatchParams v-if="showMatchParamsOverlay"/>
         </div>
       </div>
@@ -73,10 +75,11 @@ import InterfaceDeoVR from './sections/InterfaceDeoVR.vue'
 import InterfaceAdvanced from './sections/InterfaceAdvanced.vue'
 import SLRDownloader from './sections/SLRDownloader.vue'
 import VRSMashDownloader from './sections/VRSMashDownloader.vue'
+import TorrentNZB from './sections/TorrentNZB.vue'
 import SceneMatchParams from './overlays/SceneMatchParams.vue'
 
 export default {
-  components: { Storage, SceneDataScrapers, SceneCreate, Funscripts, SceneDataImportExport, InterfaceWeb, InterfaceDLNA, InterfaceDeoVR, Cache, Previews, Schedules, InterfaceAdvanced, SLRDownloader, VRSMashDownloader, SceneMatchParams },
+  components: { Storage, SceneDataScrapers, SceneCreate, Funscripts, SceneDataImportExport, InterfaceWeb, InterfaceDLNA, InterfaceDeoVR, Cache, Previews, Schedules, InterfaceAdvanced, SLRDownloader, VRSMashDownloader, TorrentNZB, SceneMatchParams },
   data: function () {
     return {
       active: 'storage'

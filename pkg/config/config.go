@@ -20,6 +20,41 @@ type CronSchedule struct {
 	RunAtStartDelay int  `default:"0" json:"runAtStartDelay"`
 }
 
+// IndexerConfig configures one Torznab or Newznab indexer.
+type IndexerConfig struct {
+	// ID is a stable xbvr-side identifier, generated when the entry is added.
+	ID string `json:"id"`
+	// Name is a display name, e.g. "Prowlarr".
+	Name string `json:"name"`
+	// Type is "torznab" or "newznab".
+	Type string `json:"type"`
+	// URL is the indexer API endpoint, e.g.
+	// "http://127.0.0.1:9696/1/api" for a Prowlarr indexer.
+	URL string `json:"url"`
+	// APIKey is sent as the "apikey" parameter.
+	APIKey string `json:"apiKey"`
+	// Categories restricts searches to these newznab category ids.
+	Categories []string `json:"categories"`
+	Enabled    bool     `json:"enabled"`
+}
+
+// DownloadClientConfig configures one external download client. Which fields
+// matter depends on the client: Username/Password for qBittorrent and
+// Transmission, APIKey for SABnzbd.
+type DownloadClientConfig struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Client   string `json:"client"`
+	Kind     string `json:"kind"`
+	URL      string `json:"url"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+	APIKey   string `json:"apiKey"`
+	Category string `json:"category"`
+	SavePath string `json:"savePath"`
+	Enabled  bool   `json:"enabled"`
+}
+
 type ObjectConfig struct {
 	Server struct {
 		BindAddress string `default:"0.0.0.0" json:"bindAddress"`
@@ -89,7 +124,46 @@ type ObjectConfig struct {
 		AutoRefreshToken  bool   `default:"false" json:"autoRefreshToken"`
 		RefreshToken      string `default:"" json:"refreshToken"`
 	} `json:"vrsmashDownloader"`
-	Vendor struct {
+	// ReleaseMatching controls the parsed-release-name matcher. Torrent and NZB
+	// releases are named "Sitename.dd.mm.yyyy.actor.releasegroup", which never
+	// matches the filenames a scraper recorded, so unmatched files are also
+	// tested against scenes by studio, date and performer.
+	ReleaseMatching struct {
+		Enabled    bool `default:"true" json:"enabled"`
+		AutoScrape bool `default:"true" json:"autoScrape"`
+		// MinScore is the evidence a candidate scene must accumulate. Studio
+		// plus exact date already scores 11; raise this to demand performers too.
+		MinScore int `default:"10" json:"minScore"`
+		// DateWindow is how many days either side of the release date a scene
+		// may sit and still receive partial date credit.
+		DateWindow int `default:"7" json:"dateWindow"`
+	} `json:"releaseMatching"`
+	// TorrentNZB controls grabbing scenes as torrents or NZBs: searching
+	// indexers, handing the release to an external client, and importing what
+	// that client finishes with into the library.
+	TorrentNZB struct {
+		Enabled bool `default:"false" json:"enabled"`
+		// ImportDir is the library folder finished downloads are placed in. It
+		// should sit inside a scanned volume.
+		ImportDir string `default:"" json:"importDir"`
+		// ImportMode is how the file is placed: "hardlink" (default, keeps the
+		// client's copy seeding), "copy" or "move".
+		ImportMode string `default:"hardlink" json:"importMode"`
+		// RemoveAfterImport deletes the job from the client once the file is in
+		// the library. Safe with hardlinks, destructive with "copy".
+		RemoveAfterImport bool `default:"false" json:"removeAfterImport"`
+		// PollSeconds is how often active grabs are refreshed from the clients.
+		PollSeconds int `default:"15" json:"pollSeconds"`
+		// MinSeeders hides torrent results below this many seeders from the UI.
+		MinSeeders int `default:"1" json:"minSeeders"`
+		// PreferredResolution, when non-zero, sorts results of that height first.
+		PreferredResolution int `default:"0" json:"preferredResolution"`
+	} `json:"torrentNzb"`
+	// Indexers are the Torznab/Newznab sources scene releases are searched on.
+	Indexers []IndexerConfig `json:"indexers"`
+	// DownloadClients are the external clients grabs are handed to.
+	DownloadClients []DownloadClientConfig `json:"downloadClients"`
+	Vendor          struct {
 		TPDB struct {
 			ApiToken string `default:"" json:"apiToken"`
 		} `json:"tpdb"`

@@ -169,8 +169,15 @@ func RescanVolumes(id int) {
 			}
 		}
 
-		tlog.Infof("Generating heatmaps")
+		// Torrent and NZB releases are named after the studio, date and
+		// performers rather than after any filename a scraper recorded, so they
+		// need a second matching pass.
+		tlog.Infof("Matching Scenes to release names")
+		if n := MatchUnmatchedFiles(db, tlog); n > 0 {
+			tlog.Infof("Matched %v file(s) by release name", n)
+		}
 
+		tlog.Infof("Generating heatmaps")
 		GenerateHeatmaps(tlog)
 
 		tlog.Infof("Scanning complete")

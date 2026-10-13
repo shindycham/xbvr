@@ -123,6 +123,7 @@
                       <trailerlist-button :item="item" v-if="!displayingAlternateSource"/>
                       <favourite-button :item="item" v-if="!displayingAlternateSource"/>
                       <slr-download-button :item="item" v-if="!displayingAlternateSource && isSLRScene"/>
+                      <grab-search-button :item="item" v-if="!displayingAlternateSource"/>
                       <wishlist-button :item="item" v-if="!displayingAlternateSource"/>
                       <watched-button :item="item" v-if="!displayingAlternateSource"/>
                       <edit-button :item="item"/>
@@ -419,10 +420,11 @@ import RescrapeButton from '../../components/RescrapeButton'
 import TrailerlistButton from '../../components/TrailerlistButton'
 import HiddenButton from '../../components/HiddenButton'
 import SLRDownloadButton from '../../components/SLRDownloadButton'
+import GrabSearchButton from '../../components/GrabSearchButton'
 
 export default {
   name: 'Details',
-  components: { VueLoadImage, GlobalEvents, StarRating, WatchlistButton, FavouriteButton, LinkStashdbButton, WishlistButton, WatchedButton, EditButton, RefreshButton, RescrapeButton, TrailerlistButton, HiddenButton, SlrDownloadButton: SLRDownloadButton },
+  components: { VueLoadImage, GlobalEvents, StarRating, WatchlistButton, FavouriteButton, LinkStashdbButton, WishlistButton, WatchedButton, EditButton, RefreshButton, RescrapeButton, TrailerlistButton, HiddenButton, SlrDownloadButton: SLRDownloadButton, GrabSearchButton: GrabSearchButton },
   data () {
     return {
       index: 1,

@@ -83,6 +83,10 @@ export default {
       if (arr && arr.argsDict && arr.argsDict.download) {
         this.$store.commit('slrDownloads/upsert', arr.argsDict.download)
       }
+      // Torrent/NZB grabs share the topic, with a "grab" key instead.
+      if (arr && arr.argsDict && arr.argsDict.grab) {
+        this.$store.commit('slrDownloads/upsertGrab', arr.argsDict.grab)
+      }
     })
 
     ws.subscribe('options.previews.previewReady', (arr, obj) => {

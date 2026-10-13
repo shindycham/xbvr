@@ -48,6 +48,66 @@
       </div>
     </div>
 
+    <!-- Torrents & NZBs -->
+    <template v-if="grabs.length">
+      <div class="columns" style="margin-bottom:0">
+        <div class="column">
+          <h4 class="title is-6">{{ $t('Torrents & NZBs') }}</h4>
+        </div>
+        <div class="column has-text-right">
+          <b-button size="is-small" icon-left="refresh" @click="reloadGrabs">{{ $t('Refresh') }}</b-button>
+        </div>
+      </div>
+
+      <div v-for="g in grabs" :key="g.id" class="box" style="padding:0.9em 1em;">
+        <div class="is-flex" style="align-items:center;justify-content:space-between;gap:1em;">
+          <div style="min-width:0;flex:1">
+            <p style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+              <strong>{{ g.release_title || g.title || g.scene_id }}</strong>
+              <b-tag v-if="g.client_name" type="is-dark" style="margin-left:0.5em">{{ g.client_name }}</b-tag>
+              <b-tag v-if="g.quality || g.resolution" style="margin-left:0.25em">{{ g.quality || (g.resolution + 'p') }} {{ g.codec }}</b-tag>
+              <b-tag :type="statusType(g.status)" style="margin-left:0.25em">{{ statusLabel(g.status) }}</b-tag>
+            </p>
+            <p v-if="g.title && g.title !== g.release_title" class="is-size-7 has-text-grey">
+              {{ g.title }}<span v-if="g.scene_id"> &middot; {{ g.scene_id }}</span>
+            </p>
+
+            <b-progress
+              v-if="isActive(g)"
+              :value="g.progress"
+              :max="100"
+              :type="g.status === 'queued' ? 'is-light' : 'is-info'"
+              size="is-small"
+              style="margin-top:0.4em">
+            </b-progress>
+
+            <p class="is-size-7 has-text-grey" style="margin-top:0.25em">
+              <template v-if="isActive(g)">
+                <span v-if="g.status === 'queued'">{{ $t('Queued') }}</span>
+                <span v-else-if="g.status === 'importing'">{{ $t('Importing') }}</span>
+                <template v-else>
+                  {{ prettyBytes(g.downloaded) }}<span v-if="g.total"> / {{ prettyBytes(g.total) }}</span>
+                  ({{ Math.round(g.progress) }}%)
+                  <span v-if="g.speed"> &middot; {{ prettyBytes(g.speed) }}/s</span>
+                  <span v-if="g.eta"> &middot; {{ $t('ETA') }} {{ formatEta(g.eta) }}</span>
+                  <span v-if="g.seeders"> &middot; {{ g.seeders }} {{ $t('seeders') }}</span>
+                </template>
+              </template>
+              <template v-else-if="g.status === 'completed'">
+                {{ prettyBytes(g.total || g.size) }}<span v-if="g.destination"> &middot; {{ g.destination }}</span>
+              </template>
+              <template v-else-if="g.error">{{ g.error }}</template>
+            </p>
+          </div>
+
+          <div style="white-space:nowrap;">
+            <b-button v-if="isActive(g)" size="is-small" type="is-danger is-light" @click="cancelGrab(g)">{{ $t('Cancel') }}</b-button>
+            <b-button v-else size="is-small" @click="removeGrab(g)"><b-icon pack="mdi" icon="close" size="is-small"/></b-button>
+          </div>
+        </div>
+      </div>
+    </template>
+
     <!-- All downloads -->
     <h4 class="title is-6">{{ $t('All downloads') }}</h4>
 
@@ -103,7 +163,7 @@
 <script>
 import prettyBytes from 'pretty-bytes'
 
-const ACTIVE = ['queued', 'resolving', 'downloading']
+const ACTIVE = ['queued', 'resolving', 'downloading', 'importing']
 const PROVIDER_NAMES = { slr: 'SexLikeReal', vrsmash: 'VRSmash' }
 
 export default {
@@ -117,6 +177,7 @@ export default {
   },
   computed: {
     items () { return this.$store.state.slrDownloads.items },
+    grabs () { return this.$store.state.slrDownloads.grabs || [] },
     quotas () { return this.$store.state.slrDownloads.quotas },
     error () { return this.$store.state.slrDownloads.error },
     isLoading () { return this.$store.state.slrDownloads.loading },
@@ -136,6 +197,7 @@ export default {
   },
   mounted () {
     this.refreshAll()
+    this.$store.dispatch('slrDownloads/loadGrabs')
     this.timer = setInterval(() => this.$store.dispatch('slrDownloads/load'), 1000)
     this.quotaTimer = setInterval(() => this.refreshQuotas(false), 60000)
   },
@@ -146,7 +208,11 @@ export default {
   methods: {
     refreshAll () {
       this.$store.dispatch('slrDownloads/load')
+      this.reloadGrabs()
       this.refreshQuotas(true)
+    },
+    reloadGrabs () {
+      this.$store.dispatch('slrDownloads/refreshGrabs')
     },
     refreshQuotas (force) {
       this.$store.dispatch('slrDownloads/loadQuota', { provider: 'slr', force })
@@ -159,6 +225,7 @@ export default {
         case 'failed': return 'is-danger'
         case 'cancelled': return 'is-warning'
         case 'queued': return 'is-light'
+        case 'importing': return 'is-info'
         default: return 'is-info'
       }
     },
@@ -188,6 +255,12 @@ export default {
     },
     async remove (d) {
       try { await this.$store.dispatch('slrDownloads/remove', d.id) } catch (e) { /* ignore */ }
+    },
+    async cancelGrab (g) {
+      try { await this.$store.dispatch('slrDownloads/cancelGrab', g.id) } catch (e) { /* surfaced via loadGrabs */ }
+    },
+    async removeGrab (g) {
+      try { await this.$store.dispatch('slrDownloads/removeGrab', g.id) } catch (e) { /* ignore */ }
     }
   }
 }

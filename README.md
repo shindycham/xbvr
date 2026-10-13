@@ -27,6 +27,8 @@
 ## Features
 
 - Automatically match title, tags, cast, cover image, and more to your videos
+- Download scenes directly from SexLikeReal and VRSmash
+- Search Torznab/Newznab indexers (Prowlarr, Jackett) for a scene's torrent or NZB releases and hand them to qBittorrent, Transmission, SABnzbd or NZBGet, then import the finished file and match it to the scene automatically
 - Support for all the most popular VR sites: BadoinkVR, CzechVR Network, DDFNetworkVR, MilfVR, NaughtyAmericaVR, SexBabesVR, StasyQVR, TmwVRnet, VirtualRealPorn, VirtualTaboo, VRBangers, VRHush, VRLatina, WankzVR and many studios on SexLikeReal
 - Directly supports DeoVR and HereSphere VR players via API
 - Built-in DLNA streaming server compatible with popular VR players (Pigasus, Skybox, Mobile Station VR)

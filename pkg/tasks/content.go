@@ -375,8 +375,28 @@ func Scrape(toScrape string, singleSceneURL string, singeScrapeAdditionalInfo st
 				sceneCount,
 				time.Since(t0).Round(time.Second))
 
+			// A torrent or NZB that arrived before its scene was scraped can now
+			// be identified, so close the loop immediately instead of waiting for
+			// the next volume rescan.
+			if n := matchUnmatchedAfterScrape(); n > 0 {
+				tlog.Infof("Release matching attached %v file(s) to the new scenes", n)
+			}
 		}
 	}
+}
+
+// matchUnmatchedAfterScrape runs the release-name pass after a scrape, ignoring
+// any failure so a matching problem can never break scraping.
+func matchUnmatchedAfterScrape() int {
+	if !config.Config.ReleaseMatching.Enabled {
+		return 0
+	}
+	db, err := models.GetDB()
+	if err != nil {
+		return 0
+	}
+	defer db.Close()
+	return MatchUnmatchedFiles(db, log.WithField("task", "scrape"))
 }
 
 func ScrapeJAVR(queryString string, scraper string) {
