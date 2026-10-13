@@ -46,6 +46,11 @@
               </b-switch>
             </b-field>
             <b-field>
+              <b-switch v-model="sceneDownload" type="is-info">
+                show Download button (SexLikeReal / VRSmash)
+              </b-switch>
+            </b-field>
+            <b-field>
               <b-switch v-model="sceneWatched" type="is-dark">
                 show Toggle Watched Status button
               </b-switch>
@@ -198,6 +203,14 @@ export default {
       },
       set (value) {
         this.$store.state.optionsWeb.web.sceneTrailerlist = value
+      }
+    },
+    sceneDownload: {
+      get () {
+        return this.$store.state.optionsWeb.web.sceneDownload
+      },
+      set (value) {
+        this.$store.state.optionsWeb.web.sceneDownload = value
       }
     },
     sceneWatched: {

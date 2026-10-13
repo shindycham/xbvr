@@ -5,6 +5,7 @@ import Options from './views/options/Options'
 import Scenes from './views/scenes/Scenes'
 import Actors  from './views/actors/Actors'
 import Files from './views/files/Files'
+import Downloads from './views/downloads/Downloads'
 
 Vue.use(Router)
 
@@ -26,6 +27,11 @@ export default new Router({
       path: '/files',
       name: 'files',
       component: Files
+    },
+    {
+      path: '/downloads',
+      name: 'downloads',
+      component: Downloads
     },
     {
       path: '/options',

@@ -15,6 +15,10 @@
       <b-navbar-item tag="router-link" :to="{ path: './files' }">
         {{$t('Files')}}
       </b-navbar-item>
+      <b-navbar-item tag="router-link" :to="{ path: './downloads' }">
+        {{$t('Downloads')}}
+        <b-tag v-if="activeDownloads > 0" type="is-info" rounded style="margin-left:0.4em">{{activeDownloads}}</b-tag>
+      </b-navbar-item>
       <b-navbar-item tag="router-link" :to="{ path: './options' }">
         {{$t('Options')}}
       </b-navbar-item>
@@ -46,7 +50,8 @@ export default {
   data () {
     return {
       currentVersion: '',
-      latestVersion: ''
+      latestVersion: '',
+      downloadsTimer: null
     }
   },
   computed: {
@@ -61,9 +66,15 @@ export default {
     },
     lastScrapeMessage () {
       return this.$store.state.messages.lastScrapeMessage
+    },
+    activeDownloads () {
+      return this.$store.getters['slrDownloads/activeCount']
     }
   },
   mounted () {
+    this.$store.dispatch('slrDownloads/load')
+    this.downloadsTimer = setInterval(() => this.$store.dispatch('slrDownloads/load'), 5000)
+
     ky.get('/api/options/version-check').json().then(data => {
       this.currentVersion = data.current_version
       this.latestVersion = data.latest_version
@@ -81,6 +92,9 @@ export default {
         })
       }
     })
+  },
+  beforeDestroy () {
+    if (this.downloadsTimer) { clearInterval(this.downloadsTimer) }
   }
 }
 </script>

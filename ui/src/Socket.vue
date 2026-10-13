@@ -79,6 +79,12 @@ export default {
       this.$store.dispatch('optionsStorage/load')
     })
 
+    ws.subscribe('state.change.download', (arr, obj) => {
+      if (arr && arr.argsDict && arr.argsDict.download) {
+        this.$store.commit('slrDownloads/upsert', arr.argsDict.download)
+      }
+    })
+
     ws.subscribe('options.previews.previewReady', (arr, obj) => {
       this.$store.commit('optionsPreviews/showPreview', { previewFn: arr.argsDict.previewFn })
     })

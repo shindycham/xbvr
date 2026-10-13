@@ -17,6 +17,7 @@ import optionsFunscripts from './optionsFunscripts'
 import optionsVendor from './optionsVendor'
 import optionsAdvanced from './optionsAdvanced'
 import optionsSceneCreate from './optionsSceneCreate'
+import slrDownloads from './slrDownloads'
 
 Vue.use(Vuex)
 
@@ -38,5 +39,6 @@ export default new Vuex.Store({
     optionsVendor,
     optionsAdvanced,
     optionsSceneCreate,
+    slrDownloads,
   }
 })

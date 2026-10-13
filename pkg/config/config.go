@@ -42,6 +42,7 @@ type ObjectConfig struct {
 		ShowHspFile          bool   `default:"true" json:"showHspFile"`
 		ShowSubtitlesFile    bool   `default:"true" json:"showSubtitlesFile"`
 		SceneTrailerlist     bool   `default:"true" json:"sceneTrailerlist"`
+		SceneDownload        bool   `default:"true" json:"sceneDownload"`
 		ShowScriptHeatmap    bool   `default:"true" json:"showScriptHeatmap"`
 		ShowAllHeatmaps      bool   `default:"false" json:"showAllHeatmaps"`
 		ShowOpenInNewWindow  bool   `default:"true" json:"showOpenInNewWindow"`
@@ -70,6 +71,24 @@ type ObjectConfig struct {
 	Funscripts struct {
 		ScrapeFunscripts bool `default:"false" json:"scrapeFunscripts"`
 	} `json:"funscripts"`
+	SLRDownloader struct {
+		Enabled             bool   `default:"true" json:"enabled"`
+		DownloadDir         string `default:"" json:"downloadDir"`
+		PreferredCodec      string `default:"h264" json:"preferredCodec"`
+		CookieConfigKey     string `default:"sexlikereal.com-downloader" json:"cookieConfigKey"`
+		UseFirefoxCookies   bool   `default:"true" json:"useFirefoxCookies"`
+		ConcurrentDownloads int    `default:"1" json:"concurrentDownloads"`
+		RescanAfterDownload bool   `default:"true" json:"rescanAfterDownload"`
+	} `json:"slrDownloader"`
+	VRSMashDownloader struct {
+		Enabled           bool   `default:"true" json:"enabled"`
+		DownloadDir       string `default:"" json:"downloadDir"`
+		PreferredCodec    string `default:"h264" json:"preferredCodec"`
+		CookieConfigKey   string `default:"vrsmash.com-downloader" json:"cookieConfigKey"`
+		UseFirefoxCookies bool   `default:"true" json:"useFirefoxCookies"`
+		AutoRefreshToken  bool   `default:"false" json:"autoRefreshToken"`
+		RefreshToken      string `default:"" json:"refreshToken"`
+	} `json:"vrsmashDownloader"`
 	Vendor struct {
 		TPDB struct {
 			ApiToken string `default:"" json:"apiToken"`

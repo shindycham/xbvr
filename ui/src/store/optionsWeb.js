@@ -15,6 +15,7 @@ const state = {
     showHspFile: true,
     showSubtitlesFile: true,
     sceneTrailerlist: true,
+    sceneDownload: true,
     updateCheck: true,
     isAvailOpacity: 40,
     showScriptHeatmap: false,
@@ -48,6 +49,7 @@ const actions = {
         state.web.showHspFile = data.config.web.showHspFile
         state.web.showSubtitlesFile = data.config.web.showSubtitlesFile
         state.web.sceneTrailerlist = data.config.web.sceneTrailerlist
+        state.web.sceneDownload = data.config.web.sceneDownload
         state.web.showScriptHeatmap = data.config.web.showScriptHeatmap
         state.web.showAllHeatmaps = data.config.web.showAllHeatmaps
         state.web.updateCheck = data.config.web.updateCheck
@@ -77,6 +79,7 @@ const actions = {
         state.web.showHspFile = data.showHspFile
         state.web.showSubtitlesFile = data.showSubtitlesFile
         state.web.sceneTrailerlist = data.sceneTrailerlist
+        state.web.sceneDownload = data.sceneDownload
         state.web.showScriptHeatmap = data.showScriptHeatmap
         state.web.showAllHeatmaps = data.showAllHeatmaps
         state.web.updateCheck = data.updateCheck

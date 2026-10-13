@@ -122,6 +122,7 @@
                       <watchlist-button :item="item" v-if="!displayingAlternateSource"/>
                       <trailerlist-button :item="item" v-if="!displayingAlternateSource"/>
                       <favourite-button :item="item" v-if="!displayingAlternateSource"/>
+                      <slr-download-button :item="item" v-if="!displayingAlternateSource && isSLRScene"/>
                       <wishlist-button :item="item" v-if="!displayingAlternateSource"/>
                       <watched-button :item="item" v-if="!displayingAlternateSource"/>
                       <edit-button :item="item"/>
@@ -417,10 +418,11 @@ import RefreshButton from '../../components/RefreshButton'
 import RescrapeButton from '../../components/RescrapeButton'
 import TrailerlistButton from '../../components/TrailerlistButton'
 import HiddenButton from '../../components/HiddenButton'
+import SLRDownloadButton from '../../components/SLRDownloadButton'
 
 export default {
   name: 'Details',
-  components: { VueLoadImage, GlobalEvents, StarRating, WatchlistButton, FavouriteButton, LinkStashdbButton, WishlistButton, WatchedButton, EditButton, RefreshButton, RescrapeButton, TrailerlistButton, HiddenButton },
+  components: { VueLoadImage, GlobalEvents, StarRating, WatchlistButton, FavouriteButton, LinkStashdbButton, WishlistButton, WatchedButton, EditButton, RefreshButton, RescrapeButton, TrailerlistButton, HiddenButton, SlrDownloadButton: SLRDownloadButton },
   data () {
     return {
       index: 1,
@@ -452,6 +454,14 @@ export default {
     }
   },
   computed: {
+    isSLRScene () {
+      const scene = this.$store.state.overlay.details.scene
+      if (!scene) { return false }
+      const url = (scene.scene_url || '').toLowerCase()
+      const id = (scene.scene_id || '').toLowerCase()
+      return url.includes('sexlikereal.com') || id.startsWith('slr-') ||
+        url.includes('vrsmash.com') || id.startsWith('vrsmash-')
+    },
     item () {
       const item = this.$store.state.overlay.details.scene
       if (this.$store.state.optionsWeb.web.tagSort === 'alphabetically') {

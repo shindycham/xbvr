@@ -30,6 +30,7 @@ import (
 	"github.com/xbapps/xbvr/pkg/models"
 	"github.com/xbapps/xbvr/pkg/session"
 	"github.com/xbapps/xbvr/pkg/tasks"
+	"github.com/xbapps/xbvr/pkg/vrsmash"
 	"github.com/xbapps/xbvr/ui"
 )
 
@@ -73,6 +74,9 @@ func StartServer(version, commit, branch, date string) {
 
 	models.InitSites()
 
+	// Keep the VRsMash session alive when automatic refresh is enabled.
+	vrsmash.StartTokenKeepAlive()
+
 	restful.DefaultContainer.EnableContentEncoding(true)
 
 	// API endpoints
@@ -96,6 +100,7 @@ func StartServer(version, commit, branch, date string) {
 	restful.Add(api.TagGroupResource{}.WebService())
 	restful.Add(api.ExternalReference{}.WebService())
 	restful.Add(api.InconsistenciesResource{}.WebService())
+	restful.Add(api.DownloadResource{}.WebService())
 
 	restConfig := restfulspec.Config{
 		WebServices: restful.RegisteredWebServices(),

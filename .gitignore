@@ -16,3 +16,7 @@ yarn-error.log
 .release-env
 .docker-creds
 xbvr.exe
+
+# local Go build caches (used when the default cache dir is unavailable)
+/.gocache/
+/.gotmp/

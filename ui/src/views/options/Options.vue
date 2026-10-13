@@ -27,6 +27,10 @@
             <b-menu-item :label="$t('Web UI')" :active="active==='interface_web'" @click="setActive('interface_web')"/>
             <b-menu-item :label="$t('Advanced')" :active="active==='interface_advanced'" @click="setActive('interface_advanced')"/>
           </b-menu-list>
+          <b-menu-list :label="$t('Downloads')">
+            <b-menu-item :label="$t('SLR Downloader')" :active="active==='slr_downloader'" @click="setActive('slr_downloader')"/>
+            <b-menu-item :label="$t('VRSmash Downloader')" :active="active==='vrsmash_downloader'" @click="setActive('vrsmash_downloader')"/>
+          </b-menu-list>
         </b-menu>
       </div>
 
@@ -44,6 +48,8 @@
           <InterfaceDLNA v-show="active==='interface_dlna'"/>
           <InterfaceDeoVR v-show="active==='interface_deovr'"/>
           <InterfaceAdvanced v-show="active==='interface_advanced'"/>
+          <SLRDownloader v-show="active==='slr_downloader'"/>
+          <VRSMashDownloader v-show="active==='vrsmash_downloader'"/>
           <SceneMatchParams v-if="showMatchParamsOverlay"/>
         </div>
       </div>
@@ -65,10 +71,12 @@ import Previews from './sections/Previews.vue'
 import Schedules from './sections/Schedules.vue'
 import InterfaceDeoVR from './sections/InterfaceDeoVR.vue'
 import InterfaceAdvanced from './sections/InterfaceAdvanced.vue'
+import SLRDownloader from './sections/SLRDownloader.vue'
+import VRSMashDownloader from './sections/VRSMashDownloader.vue'
 import SceneMatchParams from './overlays/SceneMatchParams.vue'
 
 export default {
-  components: { Storage, SceneDataScrapers, SceneCreate, Funscripts, SceneDataImportExport, InterfaceWeb, InterfaceDLNA, InterfaceDeoVR, Cache, Previews, Schedules, InterfaceAdvanced,SceneMatchParams },
+  components: { Storage, SceneDataScrapers, SceneCreate, Funscripts, SceneDataImportExport, InterfaceWeb, InterfaceDLNA, InterfaceDeoVR, Cache, Previews, Schedules, InterfaceAdvanced, SLRDownloader, VRSMashDownloader, SceneMatchParams },
   data: function () {
     return {
       active: 'storage'

@@ -55,6 +55,7 @@ type RequestSaveOptionsWeb struct {
 	ShowHspFile          bool   `json:"showHspFile"`
 	ShowSubtitlesFile    bool   `json:"showSubtitlesFile"`
 	SceneTrailerlist     bool   `json:"sceneTrailerlist"`
+	SceneDownload        bool   `json:"sceneDownload"`
 	ShowScriptHeatmap    bool   `json:"showScriptHeatmap"`
 	ShowAllHeatmaps      bool   `json:"showAllHeatmaps"`
 	ShowOpenInNewWindow  bool   `json:"showOpenInNewWindow"`
@@ -64,6 +65,16 @@ type RequestSaveOptionsWeb struct {
 	SceneCardScaleToFit  bool   `json:"sceneCardScaleToFit"`
 	ActorCardAspectRatio string `json:"actorCardAspectRatio"`
 	ActorCardScaleToFit  bool   `json:"actorCardScaleToFit"`
+}
+
+type RequestSaveOptionsSLRDownloader struct {
+	Enabled             bool   `json:"enabled"`
+	DownloadDir         string `json:"downloadDir"`
+	PreferredCodec      string `json:"preferredCodec"`
+	CookieConfigKey     string `json:"cookieConfigKey"`
+	UseFirefoxCookies   bool   `json:"useFirefoxCookies"`
+	ConcurrentDownloads int    `json:"concurrentDownloads"`
+	RescanAfterDownload bool   `json:"rescanAfterDownload"`
 }
 
 type RequestSaveOptionsAdvanced struct {
@@ -304,6 +315,14 @@ func (i ConfigResource) WebService() *restful.WebService {
 	ws.Route(ws.PUT("/interface/advanced").To(i.saveOptionsAdvanced).
 		Metadata(restfulspec.KeyOpenAPITags, tags))
 
+	// "SLR Downloader" section endpoints
+	ws.Route(ws.PUT("/slr-downloader").To(i.saveOptionsSLRDownloader).
+		Metadata(restfulspec.KeyOpenAPITags, tags))
+
+	// "VRSmash Downloader" section endpoints
+	ws.Route(ws.PUT("/vrsmash-downloader").To(i.saveOptionsVRSMashDownloader).
+		Metadata(restfulspec.KeyOpenAPITags, tags))
+
 	// "Web Advanced UI options" section endpoints
 	ws.Route(ws.PUT("/funscripts").To(i.saveOptionsFunscripts).
 		Metadata(restfulspec.KeyOpenAPITags, tags))
@@ -522,6 +541,7 @@ func (i ConfigResource) saveOptionsWeb(req *restful.Request, resp *restful.Respo
 	config.Config.Web.ShowHspFile = r.ShowHspFile
 	config.Config.Web.ShowSubtitlesFile = r.ShowSubtitlesFile
 	config.Config.Web.SceneTrailerlist = r.SceneTrailerlist
+	config.Config.Web.SceneDownload = r.SceneDownload
 	config.Config.Web.ShowScriptHeatmap = r.ShowScriptHeatmap
 	config.Config.Web.ShowAllHeatmaps = r.ShowAllHeatmaps
 	config.Config.Web.ShowOpenInNewWindow = r.ShowOpenInNewWindow
