@@ -119,21 +119,25 @@ func Match(rel Release, scenes []SceneCandidate, opts MatchOptions) MatchResult 
 		return result
 	}
 
-	result.Best = scores[0]
-	if result.Best.Total < opts.MinScore {
-		result.Reason = "best candidate scored too low"
+	// Only candidates that would be accepted on their own may count. A weak
+	// runner-up that fails the gate must not be able to make a good match look
+	// ambiguous, which is what a plain best-versus-second margin would do.
+	viable := make([]Score, 0, len(scores))
+	for _, s := range scores {
+		if acceptable(s, opts) {
+			viable = append(viable, s)
+		}
+	}
+
+	if len(viable) == 0 {
+		result.Best = scores[0]
+		result.Reason = rejectionReason(result.Best, opts)
 		return result
 	}
-	if result.Best.Date == 0 && result.Best.Name < 6 && result.Best.IDMatch == 0 {
-		// A studio match with no date has to be corroborated: a long-lived studio
-		// has many scenes that share nothing else, so studio alone is not
-		// evidence. The scene's own identifier counts as corroboration, which is
-		// what rescues undated releases that carry one.
-		result.Reason = "a studio match without a date needs corroborating performers"
-		return result
-	}
-	if len(scores) > 1 {
-		margin := result.Best.Total - scores[1].Total
+
+	result.Best = viable[0]
+	if len(viable) > 1 {
+		margin := result.Best.Total - viable[1].Total
 		if margin < opts.MinMargin {
 			result.Ambiguous = true
 			result.Reason = "two scenes match the release equally well"
@@ -141,6 +145,32 @@ func Match(rel Release, scenes []SceneCandidate, opts MatchOptions) MatchResult 
 		}
 	}
 	return result
+}
+
+// acceptable reports whether a score is strong enough to act on by itself.
+func acceptable(s Score, opts MatchOptions) bool {
+	if s.Total < opts.MinScore {
+		return false
+	}
+	// A studio match with no date has to be corroborated: a long-lived studio has
+	// many scenes that share nothing else, so the studio alone is not evidence.
+	// A scene's own identifier or a fully matched title counts as corroboration,
+	// which is what rescues undated releases.
+	if s.Date == 0 && s.Name < 6 && s.IDMatch == 0 {
+		return false
+	}
+	return true
+}
+
+// rejectionReason explains why the best candidate was not accepted.
+func rejectionReason(best Score, opts MatchOptions) string {
+	if best.Total < opts.MinScore {
+		return "best candidate scored too low"
+	}
+	if best.Date == 0 && best.Name < 6 && best.IDMatch == 0 {
+		return "a studio match without a date needs corroborating performers"
+	}
+	return "best candidate scored too low"
 }
 
 // scoreScene scores one candidate.
@@ -160,9 +190,25 @@ func scoreScene(rel Release, tokens map[string]bool, scene SceneCandidate, opts 
 		s.Reasons = append(s.Reasons, "date")
 	}
 
-	s.Name, _ = nameScore(tokens, scene)
+	var matchedNames []string
+	s.Name, matchedNames = nameScore(tokens, scene)
 	if s.Name > 0 {
-		s.Reasons = append(s.Reasons, "performers")
+		// Distinguish the two kinds of evidence, because the release-search UI
+		// shows these reasons and they mean different things to the user.
+		title, performers := false, false
+		for _, m := range matchedNames {
+			if m == "title" {
+				title = true
+			} else {
+				performers = true
+			}
+		}
+		if performers {
+			s.Reasons = append(s.Reasons, "performers")
+		}
+		if title {
+			s.Reasons = append(s.Reasons, "title")
+		}
 	}
 
 	s.IDMatch = idScore(rel, scene)
@@ -323,19 +369,39 @@ func nameScore(tokens map[string]bool, scene SceneCandidate) (int, []string) {
 	}
 
 	// Title: releases that name the scene instead of its cast. Scored on the
-	// fraction of the title's significant words that appear.
+	// fraction of the title's significant words that appear, and whether the
+	// title accounts for the release's whole name section.
+	//
+	// A title is often all an undated release has: "[xxxtor.com]VRLatina_Up_All_Day"
+	// names no performer at all. A title that is fully present therefore counts as
+	// much as a confirmed cast member, and slightly more when it also explains
+	// every name token the release carries.
 	titleTokens := significantTokens(scene.Title)
 	if len(titleTokens) >= 2 {
 		found := 0
+		present := map[string]bool{}
 		for _, tok := range titleTokens {
 			if tokens[tok] {
 				found++
+				present[tok] = true
 			}
 		}
 		fraction := float64(found) / float64(len(titleTokens))
+
 		switch {
 		case fraction >= 0.99:
-			total += 3
+			explainsRelease := true
+			for tok := range tokens {
+				if !present[tok] {
+					explainsRelease = false
+					break
+				}
+			}
+			if explainsRelease {
+				total += 6
+			} else {
+				total += 4
+			}
 			matched = append(matched, "title")
 		case fraction >= 0.6:
 			total += 2

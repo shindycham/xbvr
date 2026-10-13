@@ -163,8 +163,11 @@ func TestMatchByTitle(t *testing.T) {
 	if !result.Matched() {
 		t.Fatalf("expected a title match, got %q", result.Reason)
 	}
-	if result.Best.Name != 3 {
-		t.Errorf("name score = %d, want 3", result.Best.Name)
+	// The title is fully present AND accounts for every name token in the
+	// release, which is the strongest form of title match and scores the same as
+	// a confirmed cast member.
+	if result.Best.Name != 6 {
+		t.Errorf("name score = %d, want 6", result.Best.Name)
 	}
 }
 

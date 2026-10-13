@@ -140,8 +140,11 @@ func TestMatchRealReleases(t *testing.T) {
 		if result.Best.ID != 1 {
 			t.Errorf("matched scene %d, want 1", result.Best.ID)
 		}
-		if result.Best.Date != 0 || result.Best.Name != 6 {
-			t.Errorf("date/name = %d/%d, want 0/6", result.Best.Date, result.Best.Name)
+		// No date, so it rests on the names: the cast member is fully matched
+		// (+3) and the title is fully present but leaves the performer tokens
+		// unexplained (+4).
+		if result.Best.Date != 0 || result.Best.Name != 7 {
+			t.Errorf("date/name = %d/%d, want 0/7", result.Best.Date, result.Best.Name)
 		}
 	})
 
@@ -222,4 +225,88 @@ func contains(list []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// TestParseNameTrackerPrefixed covers a third naming style: a tracker tag in
+// brackets, underscore separators, and no performer at all, so the title is the
+// only thing identifying the release.
+func TestParseNameTrackerPrefixed(t *testing.T) {
+	for _, raw := range []string{
+		"[xxxtor.com]VRLatina_Up_All_Day_4096p_UHD_180_LR",
+		"[xxxtor.com]VRLatina_Up_All_Day_4096p_UHD_180_LR.mp4",
+		"VRLatina_Up_All_Day_4096p_UHD_180_LR",
+	} {
+		got := ParseName(raw)
+		if got.SiteKey != "vrlatina" {
+			t.Errorf("ParseName(%q).SiteKey = %q, want vrlatina", raw, got.SiteKey)
+		}
+		if got.HasDate {
+			t.Errorf("ParseName(%q) invented a date: %s", raw, got.Date.Format("2006-01-02"))
+		}
+		if strings.Join(got.Performers, " ") != "Up All Day" {
+			t.Errorf("ParseName(%q).Performers = %v, want [Up All Day]", raw, got.Performers)
+		}
+		if got.Resolution != 4096 || got.Quality != "4096p" {
+			t.Errorf("ParseName(%q) resolution/quality = %d/%q", raw, got.Resolution, got.Quality)
+		}
+		if got.Projection != "180" {
+			t.Errorf("ParseName(%q).Projection = %q, want 180", raw, got.Projection)
+		}
+	}
+}
+
+// TestMatchTitleOnlyUndatedRelease covers the case the tracker-prefixed name
+// exposed: no date and no performer, so the title has to carry the match. It
+// also pins the rule that a weak runner-up cannot make a good match look
+// ambiguous.
+func TestMatchTitleOnlyUndatedRelease(t *testing.T) {
+	rel := ParseName("[xxxtor.com]VRLatina_Up_All_Day_4096p_UHD_180_LR")
+
+	target := SceneCandidate{
+		ID: 1, SceneID: "slr-90001", Title: "Up All Day",
+		Site: "VRLatina", Studio: "VRLatina", ScraperID: "vrlatina",
+		Cast: []string{"Someone Not Named In The Release"},
+	}
+
+	result := Match(rel, []SceneCandidate{target}, DefaultMatchOptions())
+	if !result.Matched() {
+		t.Fatalf("a title-only undated release did not match its own scene: %s (%+v)", result.Reason, result.Best)
+	}
+	if !contains(result.Best.Reasons, "title") {
+		t.Errorf("reasons = %v, want them to credit the title", result.Best.Reasons)
+	}
+	if contains(result.Best.Reasons, "performers") {
+		t.Errorf("reasons = %v, but no performer appears in this release", result.Best.Reasons)
+	}
+
+	t.Run("a partial title overlap does not create ambiguity", func(t *testing.T) {
+		// "Day Off" shares one word. It fails the acceptance gate on its own, so
+		// it must not be treated as a rival worth hesitating over.
+		decoy := SceneCandidate{
+			ID: 2, SceneID: "slr-90002", Title: "Day Off",
+			Site: "VRLatina", Studio: "VRLatina", ScraperID: "vrlatina",
+			Cast: []string{"Someone Else"},
+		}
+		result := Match(rel, []SceneCandidate{decoy, target}, DefaultMatchOptions())
+		if !result.Matched() {
+			t.Fatalf("a non-viable runner-up blocked the match: %s (%+v)", result.Reason, result.Runners)
+		}
+		if result.Ambiguous {
+			t.Error("a runner-up that cannot be accepted alone must not create ambiguity")
+		}
+		if result.Best.ID != 1 {
+			t.Errorf("matched scene %d, want 1", result.Best.ID)
+		}
+	})
+
+	t.Run("a scene from the same studio with a different title is refused", func(t *testing.T) {
+		other := SceneCandidate{
+			ID: 3, SceneID: "slr-90003", Title: "Tan Lines Are Fine",
+			Site: "VRLatina", Studio: "VRLatina", ScraperID: "vrlatina",
+			Cast: []string{"Lele Mantilla"},
+		}
+		if result := Match(rel, []SceneCandidate{other}, DefaultMatchOptions()); result.Matched() {
+			t.Fatalf("matched an unrelated scene: %+v", result.Best)
+		}
+	})
 }
