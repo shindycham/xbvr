@@ -45,6 +45,12 @@ type Release struct {
 	// DateIsExact is true when the name pinned down a full day/month/year.
 	DateIsExact bool `json:"date_is_exact"`
 
+	// IDs holds the bare numeric identifiers a release name carries, such as the
+	// SLR scene number in "...SLR.30605.2880p". They are dropped from the name
+	// tokens as noise, but kept because a scene's own identifier is the single
+	// most conclusive thing an undated release can match on.
+	IDs []string `json:"ids"`
+
 	// Performers holds the name tokens between the date and the first technical
 	// marker, in their original case. The convention cannot tell a performer list
 	// from a title, so these are simply "the name tokens", and the matcher tests
@@ -128,6 +134,22 @@ var technicalTokens = map[string]bool{
 // not names themselves.
 var performerStopWords = map[string]bool{
 	"and": true, "with": true, "feat": true, "ft": true, "com": true, "www": true,
+}
+
+// sourceTags name where a release came from rather than who is in it. They are
+// skipped without ending the name section, because a tag can sit between the
+// title and the scene number ("...Cant.Tame.Me.SLR.30605...").
+var sourceTags = map[string]bool{
+	"slr": true, "povr": true, "tpdb": true, "stashdb": true,
+	"vrsmash": true, "vrporn": true, "xxx": true,
+}
+
+// resolutionLike are bare numbers that mean a resolution rather than an
+// identifier, so they are not mistaken for a scene number.
+var resolutionLike = map[string]bool{
+	"480": true, "540": true, "720": true, "1080": true, "1440": true,
+	"2160": true, "2400": true, "2700": true, "2880": true, "3240": true,
+	"4320": true, "5760": true,
 }
 
 // NormalizeSiteKey reduces a studio or site name to its comparable form:
@@ -231,10 +253,18 @@ func ParseName(name string) Release {
 			collectingNames = false
 			continue
 		}
+		// A bare number is either an identifier worth keeping or noise, never a
+		// name, so it is handled before the name-section guard.
+		if isNumeric(lower) {
+			if isSceneNumber(lower) {
+				r.IDs = append(r.IDs, lower)
+			}
+			continue
+		}
 		if !collectingNames {
 			continue
 		}
-		if performerStopWords[lower] || isNumeric(lower) {
+		if performerStopWords[lower] || sourceTags[lower] {
 			continue
 		}
 		r.Performers = append(r.Performers, tok)
@@ -424,6 +454,39 @@ func endsWithTechnicalToken(body string) bool {
 		return true
 	}
 	return false
+}
+
+// isSceneNumber reports whether a bare numeric token could be a scene
+// identifier. Years are consumed by the date search and resolutions are
+// excluded, so what is left is very likely an id.
+func isSceneNumber(tok string) bool {
+	if len(tok) < 3 {
+		return false
+	}
+	if resolutionLike[tok] {
+		return false
+	}
+	if len(tok) == 4 {
+		if n, err := strconv.Atoi(tok); err == nil && n >= 1970 && n <= time.Now().Year()+1 {
+			return false
+		}
+	}
+	return true
+}
+
+// SceneNumbers returns the numeric part of a scene identifier, e.g. "30605"
+// from "slr-30605". It returns an empty string when the identifier does not end
+// in digits.
+func SceneNumbers(sceneID string) string {
+	end := len(sceneID)
+	for end > 0 && sceneID[end-1] >= '0' && sceneID[end-1] <= '9' {
+		end--
+	}
+	digits := sceneID[end:]
+	if len(digits) < 3 {
+		return ""
+	}
+	return digits
 }
 
 func isNumeric(s string) bool {

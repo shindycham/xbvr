@@ -49,10 +49,12 @@ type Score struct {
 	ID      uint
 	SceneID string
 	Title   string
-	// Site, Date and Name are the component scores.
-	Site int
-	Date int
-	Name int
+	// Site, Date, Name and IDMatch are the component scores. (ID below is the
+	// scene's database key, which is why this one is spelled out.)
+	Site    int
+	Date    int
+	Name    int
+	IDMatch int
 	// Total is their sum.
 	Total int
 	// Reasons explains the score, for logging and for the UI.
@@ -122,10 +124,11 @@ func Match(rel Release, scenes []SceneCandidate, opts MatchOptions) MatchResult 
 		result.Reason = "best candidate scored too low"
 		return result
 	}
-	if result.Best.Date == 0 && result.Best.Name < 6 {
-		// A studio match with no date has to be corroborated by the names: a
-		// long-lived studio has many scenes that share nothing else, so studio
-		// alone is not evidence.
+	if result.Best.Date == 0 && result.Best.Name < 6 && result.Best.IDMatch == 0 {
+		// A studio match with no date has to be corroborated: a long-lived studio
+		// has many scenes that share nothing else, so studio alone is not
+		// evidence. The scene's own identifier counts as corroboration, which is
+		// what rescues undated releases that carry one.
 		result.Reason = "a studio match without a date needs corroborating performers"
 		return result
 	}
@@ -162,7 +165,12 @@ func scoreScene(rel Release, tokens map[string]bool, scene SceneCandidate, opts 
 		s.Reasons = append(s.Reasons, "performers")
 	}
 
-	s.Total = s.Site + s.Date + s.Name
+	s.IDMatch = idScore(rel, scene)
+	if s.IDMatch > 0 {
+		s.Reasons = append(s.Reasons, "scene id")
+	}
+
+	s.Total = s.Site + s.Date + s.Name + s.IDMatch
 
 	// The score is reported as computed, even when it is too weak to act on, so
 	// that the release-search UI can show *how* close a candidate was. Whether a
@@ -246,6 +254,28 @@ func dateScore(rel Release, sceneDate time.Time, window int) int {
 		return 3
 	case window > 0 && days <= window:
 		return 1
+	}
+	return 0
+}
+
+// idScore rewards a release that carries the scene's own identifier, which is
+// the strongest evidence available for a release whose name has no date.
+//
+// SLR-sourced releases are the motivating case: xbvr stores those scenes as
+// "slr-30605" while the release is named
+// "WankitnowVR.Baby.Kitten.Cant.Tame.Me.SLR.30605.2880p".
+func idScore(rel Release, scene SceneCandidate) int {
+	if len(rel.IDs) == 0 {
+		return 0
+	}
+	number := SceneNumbers(scene.SceneID)
+	if number == "" {
+		return 0
+	}
+	for _, id := range rel.IDs {
+		if id == number {
+			return 8
+		}
 	}
 	return 0
 }
