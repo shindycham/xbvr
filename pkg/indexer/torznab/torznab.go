@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xbapps/xbvr/pkg/common"
 	"github.com/xbapps/xbvr/pkg/indexer"
 )
 
@@ -365,7 +366,11 @@ func (c *client) do(ctx context.Context, params url.Values) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("torznab: building request for %s: %s", safeURL, c.redact(err.Error()))
 	}
-	req.Header.Set("Accept", "application/xml, text/xml, */*")
+	req.Header.Set("Accept", "application/xml, text/xml, application/rss+xml, */*")
+	// Without this Go sends "Go-http-client/1.1", which Cloudflare and most
+	// Newznab indexers refuse outright with a 403 HTML page.
+	req.Header.Set("User-Agent", common.UserAgent)
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -378,15 +383,43 @@ func (c *client) do(ctx context.Context, params url.Values) ([]byte, error) {
 		return nil, fmt.Errorf("torznab: reading response from %s: %s", safeURL, c.redact(err.Error()))
 	}
 
+	// A web page where a feed belongs means something in front of the indexer
+	// answered instead of it. That happens on any status, including 200 for a
+	// Cloudflare challenge, so it is checked before the status.
+	if looksLikeHTML(resp.Header.Get("Content-Type"), body) {
+		return nil, fmt.Errorf("torznab: %s answered with a web page rather than a feed (HTTP %d). "+
+			"A bot filter such as Cloudflare is blocking xbvr; routing this indexer through "+
+			"Prowlarr or Jackett avoids the block",
+			safeURL, resp.StatusCode)
+	}
+
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("torznab: %s returned HTTP %d: %s",
-			safeURL, resp.StatusCode, c.redact(truncate(body, errorBodyBytes)))
+		// A 404 is nearly always a URL that looks plausible but is not the API
+		// root, so name the trap rather than echoing a bare "Not Found".
+		hint := ""
+		if resp.StatusCode == http.StatusNotFound {
+			hint = ". Check the indexer URL: most indexers serve the API at a plain /api path with no version segment"
+		}
+		return nil, fmt.Errorf("torznab: %s returned HTTP %d: %s%s",
+			safeURL, resp.StatusCode, c.redact(truncate(body, errorBodyBytes)), hint)
 	}
 
 	if e := findIndexerError(body); e != nil {
 		return nil, fmt.Errorf("torznab: indexer error: %s", c.redact(e.Error()))
 	}
 	return body, nil
+}
+
+// looksLikeHTML reports whether a response is a web page rather than the RSS or
+// XML an indexer is supposed to return. Both the content type and the first
+// bytes are inspected, because a bot filter's page is not always labelled
+// honestly.
+func looksLikeHTML(contentType string, body []byte) bool {
+	if strings.Contains(strings.ToLower(contentType), "text/html") {
+		return true
+	}
+	head := strings.ToLower(strings.TrimSpace(truncate(body, 256)))
+	return strings.HasPrefix(head, "<!doctype html") || strings.HasPrefix(head, "<html")
 }
 
 // redactURL replaces the apikey query parameter and drops any userinfo so a URL

@@ -92,7 +92,8 @@
           </b-select>
         </b-field>
 
-        <b-field :label="$t('URL')">
+        <b-field :label="$t('URL')"
+          :message="$t('The API root, with no search parameters. Prowlarr looks like http://host:9696/<indexer id>/api and Jackett like http://host:9117/api/v2.0/indexers/all/results/torznab/api. An indexer used directly is usually just https://host/api - a version segment such as /api/v2/ is not part of it.')">
           <b-input v-model="row.url" placeholder="http://127.0.0.1:9696/1/api" expanded></b-input>
         </b-field>
 

@@ -2,6 +2,7 @@ package torznab
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -696,5 +697,108 @@ func TestGUIDDownloadURLFallback(t *testing.T) {
 		if rels[i].DownloadURL != w {
 			t.Errorf("release %q DownloadURL = %q, want %q", rels[i].Title, rels[i].DownloadURL, w)
 		}
+	}
+}
+
+// TestRequestsCarryABrowserUserAgent guards a real failure: without an explicit
+// User-Agent Go sends "Go-http-client/1.1", which Cloudflare and most Newznab
+// indexers answer with a 403 HTML page.
+func TestRequestsCarryABrowserUserAgent(t *testing.T) {
+	var gotUA, gotAccept string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUA = r.Header.Get("User-Agent")
+		gotAccept = r.Header.Get("Accept")
+		io.WriteString(w, capsBody)
+	}))
+	defer srv.Close()
+
+	c := newTestClient(t, srv, indexer.Config{ID: "i", APIKey: "k", Type: indexer.ProtocolNewznab})
+	if err := c.Test(context.Background()); err != nil {
+		t.Fatalf("Test: %v", err)
+	}
+
+	if gotUA == "" || strings.HasPrefix(gotUA, "Go-http-client") {
+		t.Errorf("User-Agent = %q, want a browser-like value", gotUA)
+	}
+	if !strings.Contains(gotUA, "Mozilla/") {
+		t.Errorf("User-Agent = %q, want it to look like a browser", gotUA)
+	}
+	if !strings.Contains(gotAccept, "xml") {
+		t.Errorf("Accept = %q, want it to ask for XML", gotAccept)
+	}
+}
+
+// TestCloudflareBlockIsExplainedNotDumped covers the error a user actually saw:
+// a 403 carrying Cloudflare's "Attention Required!" page. Dumping 512 bytes of
+// HTML told them nothing; the message must name the cause and the way out.
+func TestCloudflareBlockIsExplainedNotDumped(t *testing.T) {
+	const cloudflarePage = `<!DOCTYPE html>
+<html class="no-js" lang="en-US"><head><title>Attention Required! | Cloudflare</title></head>
+<body><h1>Sorry, you have been blocked</h1></body></html>`
+
+	cases := []struct {
+		name        string
+		status      int
+		contentType string
+	}{
+		{name: "403 with a content type", status: http.StatusForbidden, contentType: "text/html; charset=UTF-8"},
+		{name: "403 with no content type", status: http.StatusForbidden, contentType: ""},
+		{name: "200 challenge page", status: http.StatusOK, contentType: "text/html"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if tc.contentType != "" {
+					w.Header().Set("Content-Type", tc.contentType)
+				}
+				w.WriteHeader(tc.status)
+				io.WriteString(w, cloudflarePage)
+			}))
+			defer srv.Close()
+
+			c := newTestClient(t, srv, indexer.Config{ID: "i", APIKey: "secret-key", Type: indexer.ProtocolNewznab})
+			err := c.Test(context.Background())
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			msg := err.Error()
+
+			for _, want := range []string{"web page", "Cloudflare", "Prowlarr"} {
+				if !strings.Contains(msg, want) {
+					t.Errorf("error %q should mention %q", msg, want)
+				}
+			}
+			if strings.Contains(msg, "<!DOCTYPE") || strings.Contains(msg, "<html") {
+				t.Errorf("error should not dump the HTML: %q", msg)
+			}
+			if strings.Contains(msg, "secret-key") {
+				t.Errorf("error leaked the API key: %q", msg)
+			}
+		})
+	}
+}
+
+// TestNotFoundSuggestsTheURL covers the second half of the same user report: the
+// indexer URL pointed at /api/v2/, which exists nowhere, and the bare "Not
+// Found" body gave no clue.
+func TestNotFoundSuggestsTheURL(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		io.WriteString(w, `{"message":"Not Found!"}`)
+	}))
+	defer srv.Close()
+
+	c := newTestClient(t, srv, indexer.Config{ID: "i", APIKey: "secret-key", Type: indexer.ProtocolNewznab})
+	err := c.Test(context.Background())
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), "indexer URL") {
+		t.Errorf("error %q should point at the URL", err)
+	}
+	if strings.Contains(err.Error(), "secret-key") {
+		t.Errorf("error leaked the API key: %q", err)
 	}
 }
