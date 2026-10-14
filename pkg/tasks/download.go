@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -500,6 +501,17 @@ func GetDownloads() []Download {
 	for _, s := range states {
 		out = append(out, s.pub())
 	}
+
+	// The states come out of a map, and Go randomises map iteration order, so
+	// without this the list would be in a different order on every poll and the
+	// UI would visibly reshuffle. Newest first, with the id as a tie-break
+	// because two downloads can start in the same nanosecond.
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].StartedAt.Equal(out[j].StartedAt) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].StartedAt.After(out[j].StartedAt)
+	})
 	return out
 }
 

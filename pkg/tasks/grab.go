@@ -446,7 +446,14 @@ func GetGrabs() []Grab {
 	for _, s := range states {
 		out = append(out, s.pub())
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.After(out[j].StartedAt) })
+	// Same reasoning as GetDownloads: the order must be stable across polls, and
+	// SliceStable alone is not enough when two grabs share a start time.
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].StartedAt.Equal(out[j].StartedAt) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].StartedAt.After(out[j].StartedAt)
+	})
 	return out
 }
 

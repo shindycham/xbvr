@@ -90,7 +90,7 @@
                   ({{ Math.round(g.progress) }}%)
                   <span v-if="g.speed"> &middot; {{ prettyBytes(g.speed) }}/s</span>
                   <span v-if="g.eta"> &middot; {{ $t('ETA') }} {{ formatEta(g.eta) }}</span>
-                  <span v-if="g.seeders"> &middot; {{ g.seeders }} {{ $t('seeders') }}</span>
+                  <span v-if="showsSeeders(g)"> &middot; {{ g.seeders }} {{ $t('seeders') }}</span>
                 </template>
               </template>
               <template v-else-if="g.status === 'completed'">
@@ -192,7 +192,13 @@ export default {
     },
     orderedItems () {
       const rank = { downloading: 0, resolving: 1, queued: 2, failed: 3, cancelled: 4, completed: 5 }
-      return [...this.items].sort((a, b) => (rank[a.status] || 9) - (rank[b.status] || 9))
+      return [...this.items].sort((a, b) => {
+        const byStatus = (rank[a.status] || 9) - (rank[b.status] || 9)
+        // Active work first, but never leave the order to chance when two
+        // entries share a status: the list is polled once a second, and an
+        // unstable comparison makes it look like the entries are swapping.
+        return byStatus !== 0 ? byStatus : String(a.id).localeCompare(String(b.id))
+      })
     }
   },
   mounted () {
@@ -228,6 +234,11 @@ export default {
         case 'importing': return 'is-info'
         default: return 'is-info'
       }
+    },
+    // Seeders describe a torrent swarm; Usenet has none, and -1 is how an
+    // indexer that reports nothing is represented.
+    showsSeeders (g) {
+      return g.provider === 'torrent' && g.seeders >= 0
     },
     statusLabel (status) {
       return this.$t(status.charAt(0).toUpperCase() + status.slice(1))
