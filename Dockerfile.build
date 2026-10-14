@@ -1,0 +1,67 @@
+# Builds xbvr from source into the same runtime image the release produces.
+#
+# The released image is assembled by goreleaser, which compiles the binary and
+# builds the UI on the CI runner before handing a finished binary to Dockerfile.
+# That is why Dockerfile only packages: it cannot build on its own, because the
+# UI has to exist before `go build` runs (ui/fs.go embeds ui/dist).
+#
+# This file adds the two build stages so a plain
+#
+#     docker build -f Dockerfile.build -t xbvr:custom .
+#
+# works from a checkout, with no Go, Node or C toolchain on the host. The final
+# stage is deliberately identical to Dockerfile, so the resulting image behaves
+# exactly like a released one.
+
+# --------------------------------------------------------------------------- #
+# UI
+# --------------------------------------------------------------------------- #
+FROM node:24-bookworm AS ui
+
+WORKDIR /src
+
+# Install first, so the dependency layer is cached across source changes.
+COPY package.json yarn.lock ./
+RUN yarn install --ignore-engines
+
+COPY ui ./ui
+# produces ui/dist, which the Go build embeds
+RUN yarn build
+
+# --------------------------------------------------------------------------- #
+# Binary
+# --------------------------------------------------------------------------- #
+FROM golang:1.25-bookworm AS build
+
+WORKDIR /src
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+# Take the UI built above rather than anything left in the working tree.
+COPY --from=ui /src/ui/dist ./ui/dist
+
+# CGO is required: the SQLite driver is cgo, and the json1 build tag is what the
+# release binaries use.
+RUN CGO_ENABLED=1 go build -tags=json1 -o /out/xbvr main.go
+
+# --------------------------------------------------------------------------- #
+# Runtime - kept in step with Dockerfile
+# --------------------------------------------------------------------------- #
+FROM ubuntu:22.04
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends python3 ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /out/xbvr /usr/bin/xbvr
+# place data next to the executable like other platforms
+COPY xbvr_data/ /usr/bin/xbvr_data/
+COPY docker_start.sh /
+RUN chmod 777 /docker_start.sh
+
+EXPOSE 9998-9999
+VOLUME /root/.config/
+
+CMD ["/usr/bin/xbvr"]

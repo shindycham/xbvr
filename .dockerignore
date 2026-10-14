@@ -1,0 +1,24 @@
+# Build context excludes.
+#
+# The Go build cache and node_modules together are well over a gigabyte, and
+# sending them to the daemon dominates the build time for no benefit: both are
+# regenerated inside the build.
+
+.git
+.github
+
+# Local build caches and artefacts
+.gocache
+.gotmp
+dist
+ui/dist
+node_modules
+ui/node_modules
+sysroot
+sysroots.tar.bz2
+
+# Editor and OS noise
+.DS_Store
+.idea
+.vscode
+*.log
