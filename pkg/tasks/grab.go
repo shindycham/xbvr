@@ -826,24 +826,76 @@ func lookupSceneID(id uint) string {
 
 // locateCompletedContent finds the video file a finished job produced.
 func locateCompletedContent(job dlclient.Job) (string, error) {
-	if job.ContentPath != "" {
-		if info, err := os.Stat(job.ContentPath); err == nil {
+	// The client reports paths from inside its own container or host, which are
+	// not necessarily the paths xbvr can see.
+	contentPath := mapClientPath(job.ContentPath)
+	savePath := mapClientPath(job.SavePath)
+
+	if contentPath != "" {
+		if info, err := os.Stat(contentPath); err == nil {
 			if !info.IsDir() {
-				return job.ContentPath, nil
+				return contentPath, nil
 			}
-			if file, err := largestVideoFile(job.ContentPath); err == nil {
+			if file, err := largestVideoFile(contentPath); err == nil {
 				return file, nil
 			}
 		}
 	}
-	if job.SavePath == "" {
+	if savePath == "" {
 		return "", errors.New("the download client did not report where the download landed")
 	}
-	file, err := largestVideoFile(job.SavePath)
+
+	file, err := largestVideoFile(savePath)
 	if err != nil {
-		return "", fmt.Errorf("no video file found in %s", job.SavePath)
+		return "", fmt.Errorf("%s%s", err, pathMappingHint(savePath))
 	}
 	return file, nil
+}
+
+// mapClientPath rewrites a path a download client reported into the path xbvr
+// can see, using the configured mappings.
+//
+// The longest matching prefix wins, so a mapping for a subdirectory beats a
+// mapping for its parent.
+func mapClientPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+
+	bestFrom, bestTo := "", ""
+	for _, mapping := range config.Config.TorrentNZB.PathMappings {
+		from := strings.TrimRight(strings.TrimSpace(mapping.From), "/")
+		to := strings.TrimRight(strings.TrimSpace(mapping.To), "/")
+		if from == "" || to == "" {
+			continue
+		}
+		if path != from && !strings.HasPrefix(path, from+"/") {
+			continue
+		}
+		if len(from) > len(bestFrom) {
+			bestFrom, bestTo = from, to
+		}
+	}
+	if bestFrom == "" {
+		return path
+	}
+	// filepath.Join would clean away a leading separator we want to keep, so the
+	// remainder is appended explicitly.
+	return bestTo + strings.TrimPrefix(path, bestFrom)
+}
+
+// pathMappingHint explains the most common reason a finished download cannot be
+// found, because the symptom is otherwise baffling: the client insists the file
+// is there and xbvr insists it is not.
+func pathMappingHint(path string) string {
+	if len(config.Config.TorrentNZB.PathMappings) > 0 {
+		return fmt.Sprintf(" - check the path mappings in Options -> Downloads; %q is being looked up after mapping", path)
+	}
+	if _, err := os.Stat(path); err != nil {
+		return fmt.Sprintf(" - %q does not exist for xbvr. If your download client runs in another container, its paths are its own: add a path mapping in Options -> Downloads", path)
+	}
+	return fmt.Sprintf(" - %q is readable but holds no video file", path)
 }
 
 // largestVideoFile returns the biggest video file under root.

@@ -20,6 +20,19 @@ type CronSchedule struct {
 	RunAtStartDelay int  `default:"0" json:"runAtStartDelay"`
 }
 
+// PathMapping rewrites a path prefix reported by a download client into the
+// equivalent path inside xbvr.
+//
+// It exists because containers do not share a filesystem: two containers can
+// mount the same host folder at different points, and then one reports
+// "/downloads/xyz" while the other must look in "/mnt/sab/xyz".
+type PathMapping struct {
+	// From is the prefix as the download client reports it.
+	From string `json:"from"`
+	// To is the prefix as xbvr sees it.
+	To string `json:"to"`
+}
+
 // IndexerConfig configures one Torznab or Newznab indexer.
 type IndexerConfig struct {
 	// ID is a stable xbvr-side identifier, generated when the entry is added.
@@ -158,6 +171,12 @@ type ObjectConfig struct {
 		MinSeeders int `default:"1" json:"minSeeders"`
 		// PreferredResolution, when non-zero, sorts results of that height first.
 		PreferredResolution int `default:"0" json:"preferredResolution"`
+		// PathMappings rewrite the paths a download client reports into the
+		// paths xbvr can see. Containers each have their own filesystem, so a
+		// client in one container reports its internal path while xbvr needs the
+		// path it has mounted: SABnzbd saying "/downloads" must become whatever
+		// xbvr mounted that same host folder as.
+		PathMappings []PathMapping `json:"pathMappings"`
 	} `json:"torrentNzb"`
 	// Indexers are the Torznab/Newznab sources scene releases are searched on.
 	Indexers []IndexerConfig `json:"indexers"`

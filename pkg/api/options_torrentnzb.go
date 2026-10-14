@@ -12,13 +12,14 @@ import (
 
 // RequestSaveOptionsGrab is the torrent/NZB section of the options UI.
 type RequestSaveOptionsGrab struct {
-	Enabled             bool   `json:"enabled"`
-	ImportDir           string `json:"importDir"`
-	ImportMode          string `json:"importMode"`
-	RemoveAfterImport   bool   `json:"removeAfterImport"`
-	PollSeconds         int    `json:"pollSeconds"`
-	MinSeeders          int    `json:"minSeeders"`
-	PreferredResolution int    `json:"preferredResolution"`
+	Enabled             bool                 `json:"enabled"`
+	ImportDir           string               `json:"importDir"`
+	ImportMode          string               `json:"importMode"`
+	RemoveAfterImport   bool                 `json:"removeAfterImport"`
+	PollSeconds         int                  `json:"pollSeconds"`
+	MinSeeders          int                  `json:"minSeeders"`
+	PreferredResolution int                  `json:"preferredResolution"`
+	PathMappings        []config.PathMapping `json:"pathMappings"`
 
 	Indexers        []config.IndexerConfig        `json:"indexers"`
 	DownloadClients []config.DownloadClientConfig `json:"downloadClients"`
@@ -53,6 +54,7 @@ func (i ConfigResource) saveOptionsGrab(req *restful.Request, resp *restful.Resp
 	config.Config.TorrentNZB.PollSeconds = r.PollSeconds
 	config.Config.TorrentNZB.MinSeeders = r.MinSeeders
 	config.Config.TorrentNZB.PreferredResolution = r.PreferredResolution
+	config.Config.TorrentNZB.PathMappings = normalisePathMappings(r.PathMappings)
 
 	config.Config.ReleaseMatching.Enabled = r.ReleaseMatchingEnabled
 	config.Config.ReleaseMatching.AutoScrape = r.ReleaseMatchingAutoScrape
@@ -66,6 +68,21 @@ func (i ConfigResource) saveOptionsGrab(req *restful.Request, resp *restful.Resp
 	// its state wholesale rather than merging and risking stale indexer or
 	// client ids.
 	resp.WriteHeaderAndEntity(http.StatusOK, GrabStatus())
+}
+
+// normalisePathMappings trims the submitted mappings and drops the useless
+// ones, so a half-filled row cannot rewrite a path into nonsense.
+func normalisePathMappings(submitted []config.PathMapping) []config.PathMapping {
+	out := make([]config.PathMapping, 0, len(submitted))
+	for _, mapping := range submitted {
+		from := strings.TrimRight(strings.TrimSpace(mapping.From), "/")
+		to := strings.TrimRight(strings.TrimSpace(mapping.To), "/")
+		if from == "" || to == "" || from == to {
+			continue
+		}
+		out = append(out, config.PathMapping{From: from, To: to})
+	}
+	return out
 }
 
 // normaliseIndexers trims the submitted indexers, assigns identifiers to new

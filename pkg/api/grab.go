@@ -213,13 +213,14 @@ func (i GrabResource) testClient(req *restful.Request, resp *restful.Response) {
 }
 
 type ResponseGrabStatus struct {
-	Enabled             bool   `json:"enabled"`
-	ImportDir           string `json:"import_dir"`
-	ImportMode          string `json:"import_mode"`
-	RemoveAfterImport   bool   `json:"remove_after_import"`
-	PollSeconds         int    `json:"poll_seconds"`
-	MinSeeders          int    `json:"min_seeders"`
-	PreferredResolution int    `json:"preferred_resolution"`
+	Enabled             bool                 `json:"enabled"`
+	ImportDir           string               `json:"import_dir"`
+	ImportMode          string               `json:"import_mode"`
+	RemoveAfterImport   bool                 `json:"remove_after_import"`
+	PollSeconds         int                  `json:"poll_seconds"`
+	MinSeeders          int                  `json:"min_seeders"`
+	PreferredResolution int                  `json:"preferred_resolution"`
+	PathMappings        []config.PathMapping `json:"path_mappings"`
 
 	ReleaseMatchingEnabled    bool `json:"release_matching_enabled"`
 	ReleaseMatchingAutoScrape bool `json:"release_matching_auto_scrape"`
@@ -251,6 +252,8 @@ func GrabStatus() ResponseGrabStatus {
 		MinSeeders:          config.Config.TorrentNZB.MinSeeders,
 		PreferredResolution: config.Config.TorrentNZB.PreferredResolution,
 
+		PathMappings: pathMappings(),
+
 		ReleaseMatchingEnabled:    config.Config.ReleaseMatching.Enabled,
 		ReleaseMatchingAutoScrape: config.Config.ReleaseMatching.AutoScrape,
 
@@ -259,6 +262,16 @@ func GrabStatus() ResponseGrabStatus {
 		SupportedIndexers: tasks.SupportedIndexerTypes(),
 		SupportedClients:  tasks.SupportedDownloadClients(),
 	}
+}
+
+// pathMappings returns the configured mappings, never nil, so the JSON is a
+// list rather than null.
+func pathMappings() []config.PathMapping {
+	mappings := config.Config.TorrentNZB.PathMappings
+	if mappings == nil {
+		return []config.PathMapping{}
+	}
+	return mappings
 }
 
 func (i GrabResource) status(req *restful.Request, resp *restful.Response) {

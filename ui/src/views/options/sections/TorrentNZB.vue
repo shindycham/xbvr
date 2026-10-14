@@ -52,6 +52,28 @@
         <b-input v-model.number="settings.preferredResolution" type="number" min="0" expanded></b-input>
       </b-field>
 
+      <h4 class="title is-6">{{ $t('Path mappings') }}</h4>
+      <p class="is-size-7" style="margin-bottom:0.75em;">
+        {{ $t('Containers have separate filesystems, so a download client reports its own paths. Map the path it reports onto the path xbvr sees, for example /downloads to /mnt/user/downloads. Without a mapping xbvr looks in the path the client named and finds nothing.') }}
+      </p>
+
+      <b-table v-if="settings.pathMappings.length" :data="settings.pathMappings">
+        <b-table-column field="from" :label="$t('Client path')" v-slot="props">
+          <b-input v-model="props.row.from" placeholder="/downloads" expanded></b-input>
+        </b-table-column>
+        <b-table-column field="to" :label="$t('xbvr path')" v-slot="props">
+          <b-input v-model="props.row.to" placeholder="/mnt/user/downloads" expanded></b-input>
+        </b-table-column>
+        <b-table-column v-slot="props">
+          <b-button @click="removePathMapping(props.index)"><b-icon pack="fas" icon="trash"></b-icon></b-button>
+        </b-table-column>
+      </b-table>
+
+      <b-button size="is-small" @click="addPathMapping" style="margin-bottom:1em;">
+        <b-icon pack="mdi" icon="plus" size="is-small"></b-icon>
+        <span>{{ $t('Add path mapping') }}</span>
+      </b-button>
+
       <h4 class="title is-6">{{ $t('Release name matching') }}</h4>
 
       <p class="is-size-7 has-text-grey">
@@ -292,6 +314,7 @@ export default {
         pollSeconds: 15,
         minSeeders: 1,
         preferredResolution: 0,
+        pathMappings: [],
         releaseMatchingEnabled: true,
         releaseMatchingAutoScrape: true,
         indexers: [],
@@ -322,6 +345,7 @@ export default {
           pollSeconds: status.poll_seconds || 15,
           minSeeders: status.min_seeders || 0,
           preferredResolution: status.preferred_resolution || 0,
+          pathMappings: (status.path_mappings || []).map(m => ({ from: m.from || '', to: m.to || '' })),
           releaseMatchingEnabled: status.release_matching_enabled !== false,
           releaseMatchingAutoScrape: status.release_matching_auto_scrape !== false,
           indexers: (status.indexers || []).map(indexerRow),
@@ -335,6 +359,8 @@ export default {
     },
     indexerState (row) { return this.indexerTest[row.uid] || {} },
     clientState (row) { return this.clientTest[row.uid] || {} },
+    addPathMapping () { this.settings.pathMappings.push({ from: '', to: '' }) },
+    removePathMapping (i) { this.settings.pathMappings.splice(i, 1) },
     addIndexer () { this.settings.indexers.push(blankIndexer()) },
     removeIndexer (i) { this.settings.indexers.splice(i, 1) },
     addClient () { this.settings.downloadClients.push(blankClient()) },
@@ -368,6 +394,9 @@ export default {
           pollSeconds: this.settings.pollSeconds,
           minSeeders: this.settings.minSeeders,
           preferredResolution: this.settings.preferredResolution,
+          pathMappings: this.settings.pathMappings
+            .map(m => ({ from: (m.from || '').trim(), to: (m.to || '').trim() }))
+            .filter(m => m.from && m.to),
           indexers: this.settings.indexers.map(indexerPayload),
           downloadClients: this.settings.downloadClients.map(clientPayload),
           releaseMatchingEnabled: !!this.settings.releaseMatchingEnabled,

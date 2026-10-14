@@ -1174,3 +1174,155 @@ func TestStartSceneGrabRefusesADuplicate(t *testing.T) {
 		t.Errorf("a new grab should be allowed after the previous one finished: %s", err)
 	}
 }
+
+// --------------------------------------------------------------------------- //
+// Path mapping
+// --------------------------------------------------------------------------- //
+
+// TestMapClientPath covers the cross-container case: a download client reports
+// the path from inside its own container, which is not where xbvr can see it.
+func TestMapClientPath(t *testing.T) {
+	withGrabConfig(t, grabConfig(func() {
+		config.Config.TorrentNZB.PathMappings = []config.PathMapping{
+			{From: "/downloads", To: "/mnt/user/downloads"},
+			{From: "/downloads/complete", To: "/mnt/user/complete"},
+		}
+	}))
+
+	tests := map[string]string{
+		"/downloads":                         "/mnt/user/downloads",
+		"/downloads/xxx/scenes/VR/Scene.mkv": "/mnt/user/downloads/xxx/scenes/VR/Scene.mkv",
+		// The longest matching prefix wins.
+		"/downloads/complete/Scene.mkv": "/mnt/user/complete/Scene.mkv",
+		// A prefix that only looks similar must not match.
+		"/downloads-other/Scene.mkv": "/downloads-other/Scene.mkv",
+		"/elsewhere/Scene.mkv":       "/elsewhere/Scene.mkv",
+		"":                           "",
+	}
+	for in, want := range tests {
+		if got := mapClientPath(in); got != want {
+			t.Errorf("mapClientPath(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestMapClientPathWithoutMappings(t *testing.T) {
+	withGrabConfig(t, grabConfig(func() { config.Config.TorrentNZB.PathMappings = nil }))
+	if got := mapClientPath("/downloads/a"); got != "/downloads/a" {
+		t.Errorf("mapClientPath = %q, want it unchanged", got)
+	}
+}
+
+func TestMapClientPathTolerantOfSloppyConfig(t *testing.T) {
+	withGrabConfig(t, grabConfig(func() {
+		config.Config.TorrentNZB.PathMappings = []config.PathMapping{
+			{From: "  /downloads/  ", To: "  /mnt/user/downloads/  "},
+			{From: "", To: "/nope"},
+			{From: "/x", To: ""},
+		}
+	}))
+
+	if got := mapClientPath("/downloads/a/b"); got != "/mnt/user/downloads/a/b" {
+		t.Errorf("mapClientPath = %q, want trailing slashes and spaces ignored", got)
+	}
+	// An incomplete mapping must be skipped rather than producing a broken path.
+	if got := mapClientPath("/x/y"); got != "/x/y" {
+		t.Errorf("mapClientPath = %q, want the incomplete mapping skipped", got)
+	}
+}
+
+// TestImportUsesMappedPath is the end-to-end version: the client reports one
+// path, the file is actually readable at another, and the import still works.
+func TestImportUsesMappedPath(t *testing.T) {
+	workDir := t.TempDir()
+
+	// This is what xbvr can actually see.
+	realDownloadDir := filepath.Join(workDir, "mnt", "downloads")
+	releaseDir := filepath.Join(realDownloadDir, "xxx", "scenes", "VR", "WankzVR-Scene")
+	if err := os.MkdirAll(releaseDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	feature := filepath.Join(releaseDir, "WankzVR-Scene-1600p.mp4")
+	if err := os.WriteFile(feature, make([]byte, 4096), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	importDir := filepath.Join(workDir, "library")
+
+	withGrabConfig(t, grabConfig(func() {
+		config.Config.TorrentNZB.ImportDir = importDir
+		// The client thinks it is in a container where the share is /downloads.
+		config.Config.TorrentNZB.PathMappings = []config.PathMapping{
+			{From: "/downloads", To: realDownloadDir},
+		}
+		config.Config.DownloadClients = append(config.Config.DownloadClients,
+			config.DownloadClientConfig{
+				ID: "sab-1", Name: "SABnzbd", Client: "sabnzbd", Kind: "nzb",
+				URL: "http://127.0.0.1:8080", Enabled: true,
+			})
+	}))
+
+	stub := &stubClient{cfg: dlclient.Config{ID: "sab-1", Kind: "nzb"}}
+	stub.addReturns = dlclient.Job{ID: "nzo-1", State: dlclient.StateQueued}
+	useClient(t, stub)
+	noRescan(t)
+
+	var scene models.Scene
+	scene.ID = 42
+	scene.SceneID = "wankzvr-1"
+	scene.Title = "Wank In Closet"
+	scene.Site = "WankzVR"
+	scene.Studio = "WankzVR"
+
+	grab, err := StartSceneGrab(scene, ReleaseCandidate{
+		Title:       "WankzVR.Wank.In.Closet.1600p",
+		Protocol:    dlclient.KindNZB,
+		DownloadURL: "https://indexer/get/1.nzb",
+	})
+	if err != nil {
+		t.Fatalf("StartSceneGrab: %s", err)
+	}
+	t.Cleanup(func() { RemoveGrab(grab.ID) })
+
+	// The job reports the container-internal path, as SABnzbd does.
+	stub.jobs = []dlclient.Job{{
+		ID: "nzo-1", Ref: grab.Ref, Name: grab.ReleaseTitle,
+		State: dlclient.StateCompleted, Progress: 100,
+		SavePath:    "/downloads/xxx/scenes/VR/WankzVR-Scene",
+		ContentPath: "/downloads/xxx/scenes/VR/WankzVR-Scene",
+	}}
+	PollGrabs()
+
+	state := grabByID(t, grab.ID)
+	if state.Status != GrabStatusCompleted {
+		t.Fatalf("status = %q, want completed, error: %s", state.Status, state.Error)
+	}
+	if filepath.Dir(state.Destination) != importDir {
+		t.Errorf("destination = %q, want it inside %q", state.Destination, importDir)
+	}
+}
+
+// TestUnmappedPathExplainsItself checks the error a user sees when the mapping
+// is missing, because the symptom is otherwise baffling.
+func TestUnmappedPathExplainsItself(t *testing.T) {
+	withGrabConfig(t, grabConfig())
+
+	_, err := locateCompletedContent(dlclient.Job{
+		SavePath: "/downloads/xxx/scenes/VR/WankzVR-Wank-In-Closet",
+	})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	msg := err.Error()
+	for _, want := range []string{"no video file found", "does not exist", "path mapping"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error %q should mention %q", msg, want)
+		}
+	}
+
+	// With a mapping configured, the message points at the mappings instead.
+	config.Config.TorrentNZB.PathMappings = []config.PathMapping{{From: "/downloads", To: "/mnt/user/downloads"}}
+	_, err = locateCompletedContent(dlclient.Job{SavePath: "/downloads/x"})
+	if err == nil || !strings.Contains(err.Error(), "check the path mappings") {
+		t.Errorf("error = %v, want it to point at the path mappings", err)
+	}
+}
