@@ -46,6 +46,8 @@ func RescanVolumes(id int) {
 		db, _ := models.GetDB()
 		defer db.Close()
 
+		removeOrphanedFiles(db, tlog)
+
 		var vol []models.Volume
 		if id > 0 {
 			db.Where("id=?", id).Find(&vol)
@@ -218,6 +220,52 @@ func RescanVolumes(id int) {
 	}
 }
 
+// removeOrphanedFiles deletes file rows that belong to no volume.
+//
+// Every file must belong to a volume to be usable, so a row without one is
+// debris: it cannot be opened, it can never match, and nothing else will ever
+// clear it. Before findOrCreateFile such rows were left behind whenever a scan
+// was interrupted between inserting the file and hashing it.
+func removeOrphanedFiles(db *gorm.DB, tlog *logrus.Entry) {
+	res := db.Where("volume_id = 0 OR volume_id NOT IN (SELECT id FROM volumes)").Delete(models.File{})
+	if res.Error != nil {
+		tlog.Errorf("Could not clear files that belong to no volume: %s", res.Error)
+		return
+	}
+	if res.RowsAffected > 0 {
+		tlog.Infof("Removed %d file(s) that no longer belonged to any volume", res.RowsAffected)
+	}
+}
+
+// findOrCreateFile finds the row for a file, creating it already attached to its
+// volume.
+//
+// Creating the row and attaching it to a volume must happen together. The row
+// used to be inserted with no volume and only given one at the final Save, which
+// comes after hashing and ffprobe - seconds per file. Anything that interrupted
+// a scan in that window left rows with no volume behind, and nothing would ever
+// remove them: deleting a volume only deletes the files whose volume_id matches
+// it. They then showed up as permanently unmatched, since a file with no volume
+// can never be reported as existing.
+func findOrCreateFile(db *gorm.DB, path, fileType string, volumeID uint) (models.File, error) {
+	dir, name := filepath.Dir(path), filepath.Base(path)
+
+	var fl models.File
+	err := db.Where(&models.File{Path: dir, Filename: name, Type: fileType}).First(&fl).Error
+	if err == nil {
+		return fl, nil
+	}
+	if err != gorm.ErrRecordNotFound {
+		return models.File{}, err
+	}
+
+	fl = models.File{Path: dir, Filename: name, Type: fileType, VolumeID: volumeID}
+	if err := db.Create(&fl).Error; err != nil {
+		return models.File{}, err
+	}
+	return fl, nil
+}
+
 func scanLocalVolume(vol models.Volume, db *gorm.DB, tlog *logrus.Entry) {
 	allowedVideoExt := getAllowedVideoExt()
 	if vol.IsMounted() {
@@ -269,12 +317,11 @@ func scanLocalVolume(vol models.Volume, db *gorm.DB, tlog *logrus.Entry) {
 			} else {
 				birthtime = fTimes.ModTime()
 			}
-			var fl models.File
-			db.Where(&models.File{
-				Path:     filepath.Dir(path),
-				Filename: filepath.Base(path),
-				Type:     "video",
-			}).FirstOrCreate(&fl)
+			fl, err := findOrCreateFile(db, path, "video", vol.ID)
+			if err != nil {
+				tlog.Errorf("Could not record %s: %s", path, err)
+				continue
+			}
 
 			fl.Size = fStat.Size()
 			fl.CreatedTime = birthtime
@@ -355,12 +402,11 @@ func scanLocalVolume(vol models.Volume, db *gorm.DB, tlog *logrus.Entry) {
 		}
 
 		for _, path := range scriptProcList {
-			var fl models.File
-			db.Where(&models.File{
-				Path:     filepath.Dir(path),
-				Filename: filepath.Base(path),
-				Type:     "script",
-			}).FirstOrCreate(&fl)
+			fl, err := findOrCreateFile(db, path, "script", vol.ID)
+			if err != nil {
+				tlog.Errorf("Could not record %s: %s", path, err)
+				continue
+			}
 
 			fStat, _ := os.Stat(path)
 			fTimes, _ := times.Stat(path)
@@ -497,12 +543,11 @@ func ScanLocalHspFile(path string, volID uint, sceneId uint) {
 	db, _ := models.GetDB()
 	defer db.Close()
 
-	var fl models.File
-	db.Where(&models.File{
-		Path:     filepath.Dir(path),
-		Filename: filepath.Base(path),
-		Type:     "hsp",
-	}).FirstOrCreate(&fl)
+	fl, err := findOrCreateFile(db, path, "hsp", volID)
+	if err != nil {
+		log.Error(err)
+		return
+	}
 
 	fStat, _ := os.Stat(path)
 	fTimes, _ := times.Stat(path)
@@ -522,12 +567,11 @@ func ScanLocalSubtitlesFile(path string, volID uint, sceneId uint) {
 	db, _ := models.GetDB()
 	defer db.Close()
 
-	var fl models.File
-	db.Where(&models.File{
-		Path:     filepath.Dir(path),
-		Filename: filepath.Base(path),
-		Type:     "subtitles",
-	}).FirstOrCreate(&fl)
+	fl, err := findOrCreateFile(db, path, "subtitles", volID)
+	if err != nil {
+		log.Error(err)
+		return
+	}
 
 	fStat, _ := os.Stat(path)
 	fTimes, _ := times.Stat(path)

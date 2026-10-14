@@ -96,6 +96,13 @@ func (i FilesResource) listFiles(req *restful.Request, resp *restful.Response) {
 	var files []models.File
 	tx := db.Model(&files)
 
+	// A file whose volume no longer exists can never be opened, so listing it
+	// only ever shows as an unmatched entry that nothing can clear: the delete
+	// endpoint removes the file from disk first and gives up when there is
+	// nothing to remove, and deleting a volume only takes the files that name
+	// it. See findOrCreateFile for how such rows came to exist.
+	tx = tx.Where("files.volume_id != 0 AND files.volume_id IN (SELECT id FROM volumes)")
+
 	// State
 	switch r.State.OrElse("") {
 	case "matched":
