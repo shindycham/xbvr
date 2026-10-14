@@ -39,6 +39,21 @@ var quotaCache struct {
 	at   time.Time
 }
 
+// fetchQuota does the actual request. It is a variable so the cache behaviour
+// can be tested without touching the network.
+var fetchQuota = fetchQuotaUncached
+
+// InvalidateQuota drops the cached allowance.
+//
+// The cache exists to stop the Downloads view hammering the site, but the
+// allowance changes the moment a download finishes, and waiting out the TTL
+// means the number on screen is wrong for minutes after every download.
+func InvalidateQuota() {
+	quotaCache.mu.Lock()
+	defer quotaCache.mu.Unlock()
+	quotaCache.at = time.Time{}
+}
+
 // FetchQuota returns the account's remaining download allowance, cached for a
 // few minutes so the Downloads view does not hammer the site. Pass force to
 // bypass the cache.
@@ -50,7 +65,7 @@ func FetchQuota(force bool) QuotaInfo {
 		return quotaCache.info
 	}
 
-	info := fetchQuotaUncached()
+	info := fetchQuota()
 	// Keep serving the last good value if a refresh fails.
 	if info.Error != "" && quotaCache.info.Error == "" && !quotaCache.at.IsZero() {
 		stale := quotaCache.info

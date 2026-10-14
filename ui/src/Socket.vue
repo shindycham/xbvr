@@ -80,12 +80,22 @@ export default {
     })
 
     ws.subscribe('state.change.download', (arr, obj) => {
+      let finished = null
       if (arr && arr.argsDict && arr.argsDict.download) {
         this.$store.commit('slrDownloads/upsert', arr.argsDict.download)
+        finished = arr.argsDict.download
       }
       // Torrent/NZB grabs share the topic, with a "grab" key instead.
       if (arr && arr.argsDict && arr.argsDict.grab) {
         this.$store.commit('slrDownloads/upsertGrab', arr.argsDict.grab)
+        finished = arr.argsDict.grab
+      }
+      // A finished download changes the provider's remaining allowance, and the
+      // server has already dropped its cached figure. Ask for the new one now so
+      // the count moves with the download instead of on the next poll.
+      if (finished && ['completed', 'failed', 'cancelled'].includes(finished.status)) {
+        this.$store.dispatch('slrDownloads/loadQuota', { provider: 'slr', force: true })
+        this.$store.dispatch('slrDownloads/loadQuota', { provider: 'vrsmash', force: true })
       }
     })
 

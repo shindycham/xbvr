@@ -123,6 +123,9 @@ type downloadProvider struct {
 	PreferredCodec func() string
 	Concurrent     func() int
 	Rescan         func() bool
+	// InvalidateQuota drops any cached allowance for this provider. A finished
+	// download changes the count, and a cached one would report the old figure.
+	InvalidateQuota func()
 }
 
 var downloadProviders []downloadProvider
@@ -205,12 +208,13 @@ func init() {
 		Filename: func(scene models.Scene, quality, codec string) string {
 			return slr.ExpectedFilename(scene, heightFromQuality(quality), codec)
 		},
-		Download:       slr.DownloadFile,
-		Dir:            slrDownloadDir,
-		Enabled:        func() bool { return config.Config.SLRDownloader.Enabled },
-		PreferredCodec: func() string { return config.Config.SLRDownloader.PreferredCodec },
-		Concurrent:     func() int { return config.Config.SLRDownloader.ConcurrentDownloads },
-		Rescan:         func() bool { return config.Config.SLRDownloader.RescanAfterDownload },
+		Download:        slr.DownloadFile,
+		Dir:             slrDownloadDir,
+		Enabled:         func() bool { return config.Config.SLRDownloader.Enabled },
+		PreferredCodec:  func() string { return config.Config.SLRDownloader.PreferredCodec },
+		Concurrent:      func() int { return config.Config.SLRDownloader.ConcurrentDownloads },
+		Rescan:          func() bool { return config.Config.SLRDownloader.RescanAfterDownload },
+		InvalidateQuota: slr.InvalidateQuota,
 	})
 
 	registerDownloadProvider(downloadProvider{
@@ -331,11 +335,18 @@ func StartDownload(scene models.Scene, quality, codec string) (Download, error) 
 
 	publishDownload(state)
 
+	// The allowance is about to change, so drop whatever was cached.
+	invalidateProviderQuota(p)
+
 	go runDownload(ctx, state, scene, quality, codec, dir, p)
 	return state.pub(), nil
 }
 
 func runDownload(ctx context.Context, state *downloadState, scene models.Scene, quality, codec, dir string, p *downloadProvider) {
+	// Whatever the outcome, the cached allowance is no longer trustworthy: a
+	// successful download decrements it, and a failed one may still have.
+	defer invalidateProviderQuota(p)
+
 	defer func() {
 		if r := recover(); r != nil {
 			setDownloadFailure(state, fmt.Sprintf("unexpected error: %v", r))
@@ -604,6 +615,13 @@ func slrDownloadDir() string {
 		return ""
 	}
 	return filepath.Clean(os.ExpandEnv(dir))
+}
+
+// invalidateProviderQuota tells a provider that its cached allowance is stale.
+func invalidateProviderQuota(p *downloadProvider) {
+	if p != nil && p.InvalidateQuota != nil {
+		p.InvalidateQuota()
+	}
 }
 
 func isActiveStatus(status string) bool {

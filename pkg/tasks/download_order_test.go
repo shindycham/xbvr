@@ -110,3 +110,19 @@ func TestGetGrabsOrderIsStable(t *testing.T) {
 		}
 	}
 }
+
+// TestProvidersWithAnAllowanceCanInvalidateIt guards the link between a finished
+// download and the allowance shown in the UI. SLR reports a download quota, so
+// its provider must be able to say that the cached figure is stale; without it
+// the number sat unchanged for the length of the cache TTL after every download.
+func TestProvidersWithAnAllowanceCanInvalidateIt(t *testing.T) {
+	for _, id := range []string{"slr"} {
+		p := providerByID(id)
+		if p == nil {
+			t.Fatalf("no %s provider registered", id)
+		}
+		if p.InvalidateQuota == nil {
+			t.Errorf("the %s provider reports a quota but cannot invalidate the cache", id)
+		}
+	}
+}
