@@ -51,6 +51,15 @@ RUN CGO_ENABLED=1 go build -tags=json1 -o /out/xbvr main.go
 # --------------------------------------------------------------------------- #
 FROM ubuntu:22.04
 
+# Links the image to a repository on GitHub, which is what makes a GHCR package
+# appear under that repo and inherit its access. Override it when building from
+# a fork:
+#
+#   docker build -f Dockerfile.build \
+#     --build-arg SOURCE_URL=https://github.com/shindycham/xbvr -t ... .
+ARG SOURCE_URL=https://github.com/xbapps/xbvr
+LABEL org.opencontainers.image.source=${SOURCE_URL}
+
 RUN apt-get update && \
     apt-get install -y --no-install-recommends python3 ca-certificates && \
     rm -rf /var/lib/apt/lists/*
