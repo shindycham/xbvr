@@ -44,120 +44,15 @@ func addScene(t *testing.T, db *gorm.DB, sceneID, title, scraperID string, relea
 	return scene
 }
 
-func TestNormaliseDuplicateTitle(t *testing.T) {
-	tests := map[string]string{
-		"Naughty Gym - Featuring Amalia Davis": "naughty gym amalia davis",
-		"Caught In The Act!":                   "caught act",
-		"VRBangers: Midnight Swim":             "vrbangers midnight swim",
-		"  ...  ":                              "",
-		"The Best of 2024":                     "best 2024",
-	}
-	for in, want := range tests {
-		if got := normaliseDuplicateTitle(in); got != want {
-			t.Errorf("normaliseDuplicateTitle(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
-// TestDurationsAgree pins the unit as well as the tolerance: durations are in
-// minutes, so values like 30 are half an hour. A seconds-based slack here would
-// treat a 30 minute scene and a two hour one as the same length.
-func TestDurationsAgree(t *testing.T) {
-	at := func(d ...int) []DuplicateScene {
-		out := make([]DuplicateScene, 0, len(d))
-		for _, v := range d {
-			out = append(out, DuplicateScene{Duration: v})
-		}
-		return out
-	}
-	if !durationsAgree(at(30, 31)) {
-		t.Error("durations a minute apart should agree")
-	}
-	if durationsAgree(at(30, 32+1)) {
-		t.Error("a four minute difference should not agree")
-	}
-	if durationsAgree(at(30, 140)) {
-		t.Error("a feature and a trailer must not agree")
-	}
-	if durationsAgree(at(30, 0)) {
-		t.Error("one known duration is not agreement")
-	}
-	if !durationsAgree(at(30, 30, 31)) {
-		t.Error("three close durations should agree")
-	}
-}
-
-func TestScoreDuplicateGroupPrefersDifferentSources(t *testing.T) {
-	when := time.Date(2023, time.October, 14, 0, 0, 0, 0, time.UTC)
-	sameSource := []DuplicateScene{
-		{ScraperID: "slr-originals", ReleaseDate: when, Duration: 1800, Cast: []string{"Jane Doe"}},
-		{ScraperID: "slr-originals", ReleaseDate: when, Duration: 1800, Cast: []string{"Jane Doe"}},
-	}
-	acrossSources := []DuplicateScene{
-		{ScraperID: "slr-originals", ReleaseDate: when, Duration: 1800, Cast: []string{"Jane Doe"}},
-		{ScraperID: "vrsmash", ReleaseDate: when, Duration: 1800, Cast: []string{"Jane Doe"}},
-	}
-
-	low, _ := scoreDuplicateGroup(sameSource)
-	high, reasons := scoreDuplicateGroup(acrossSources)
-	if high <= low {
-		t.Errorf("scenes from different sources should score higher: %d vs %d", high, low)
-	}
-	if len(reasons) == 0 {
-		t.Error("no reasons were given")
-	}
-}
-
-// TestFindDuplicateScenesGroupsByTitleAndDate is the core detection test: the
-// same scene scraped from two sites must come back as one group, and a remake
-// years later must not.
-func TestFindDuplicateScenesGroupsByTitleAndDate(t *testing.T) {
-	db := openDuplicateTestDB(t)
-
-	day := time.Date(2023, time.October, 14, 0, 0, 0, 0, time.UTC)
-	addScene(t, db, "slr-1", "Midnight Swim", "slr-originals", day, 1800, false)
-	addScene(t, db, "vrsmash-1", "Midnight Swim", "vrsmash", day.Add(12*time.Hour), 1795, false)
-
-	// Same title, three years earlier: a remake, not a duplicate.
-	addScene(t, db, "slr-2", "Midnight Swim", "slr-originals", day.AddDate(-3, 0, 0), 2000, false)
-
-	// A genuinely different scene.
-	addScene(t, db, "wankzvr-1", "Something Else", "wankzvr", day, 1900, false)
-
-	groups, err := findDuplicateScenes(db, 50)
-	if err != nil {
-		t.Fatalf("findDuplicateScenes: %s", err)
-	}
-	if len(groups) != 1 {
-		t.Fatalf("got %d groups, want 1: %+v", len(groups), groups)
-	}
-	if len(groups[0].Scenes) != 2 {
-		t.Fatalf("group has %d scenes, want 2 (the remake must be separate)", len(groups[0].Scenes))
-	}
-	if groups[0].Score == 0 {
-		t.Error("group scored 0")
-	}
-
-	// Detail counts must come through, since the reviewer picks the primary by
-	// which copy has the files.
-	if len(groups[0].Scenes[0].Cast) != 0 && groups[0].Scenes[0].FileCount != 0 {
-		t.Logf("scene detail: %+v", groups[0].Scenes[0])
-	}
-}
-
 func TestFindDuplicateScenesReportsFilesAndCast(t *testing.T) {
 	db := openDuplicateTestDB(t)
 
 	day := time.Date(2023, time.October, 14, 0, 0, 0, 0, time.UTC)
-	slr := addScene(t, db, "slr-1", "Midnight Swim", "slr-originals", day, 1800, false)
-	alt := addScene(t, db, "vrsmash-1", "Midnight Swim", "vrsmash", day, 1800, false)
-
-	actor := models.Actor{Name: "Jane Doe"}
-	db.Create(&actor)
-	// The many-to-many join table has no model of its own.
-	if err := db.Exec("insert into scene_cast (scene_id, actor_id) values (?, ?)", slr.ID, actor.ID).Error; err != nil {
-		t.Fatal(err)
-	}
+	// Equal runtimes and equal casts, which is the whole rule.
+	slr := addScene(t, db, "slr-1", "Midnight Swim", "slr-originals", day, 30, false)
+	alt := addScene(t, db, "vrsmash-1", "Midnight Swim", "vrsmash", day, 30, false)
+	addCast(t, db, slr, "Jane Doe")
+	addCast(t, db, alt, "Jane Doe")
 
 	db.Create(&models.File{SceneID: slr.ID, Path: "/media", Filename: "scene.mp4", Type: "video"})
 	db.Create(&models.File{SceneID: slr.ID, Path: "/media", Filename: "scene.funscript", Type: "script"})
@@ -184,25 +79,6 @@ func TestFindDuplicateScenesReportsFilesAndCast(t *testing.T) {
 	}
 }
 
-func TestFindDuplicateScenesSkipsSingleScenesAndEmptyTitles(t *testing.T) {
-	db := openDuplicateTestDB(t)
-	day := time.Date(2023, time.October, 14, 0, 0, 0, 0, time.UTC)
-
-	addScene(t, db, "only-1", "Unique Scene", "slr-originals", day, 1800, false)
-	addScene(t, db, "empty-1", "", "slr-originals", day, 1800, false)
-	addScene(t, db, "empty-2", "   ", "vrsmash", day, 1800, false)
-
-	groups, err := findDuplicateScenes(db, 50)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(groups) != 0 {
-		t.Errorf("got %d groups, want none: %+v", len(groups), groups)
-	}
-}
-
-// TestMergeScenesMovesFilesAndHidesTheDuplicate covers what a merge must not do:
-// lose a downloaded file, or destroy the duplicate.
 func TestMergeScenesMovesFilesAndHidesTheDuplicate(t *testing.T) {
 	db := openDuplicateTestDB(t)
 
@@ -361,32 +237,6 @@ func TestUnmergeSceneWithoutAMerge(t *testing.T) {
 
 // TestFindDuplicateScenesCatchesDifferingTitles covers the second pass. Two
 // aggregators often list the same scene under different titles, and matching on
-// the title alone would never see it.
-func TestFindDuplicateScenesCatchesDifferingTitles(t *testing.T) {
-	db := openDuplicateTestDB(t)
-	day := time.Date(2023, time.October, 14, 0, 0, 0, 0, time.UTC)
-
-	// Same scene, same day, same performer, different titles.
-	a := addScene(t, db, "slr-1", "Midnight Swim", "slr-originals", day, 1800, false)
-	b := addScene(t, db, "vrsmash-1", "Midnight Swim Part One", "vrsmash", day, 1800, false)
-
-	// Two performers in common, which is what the cast pass now requires.
-	addCast(t, db, a, "Jane Doe", "John Smith")
-	addCast(t, db, b, "Jane Doe", "John Smith")
-
-	groups, err := findDuplicateScenes(db, 50)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(groups) != 1 {
-		t.Fatalf("got %d groups, want 1: %+v", len(groups), groups)
-	}
-	if len(groups[0].Scenes) != 2 {
-		t.Fatalf("group has %d scenes, want 2", len(groups[0].Scenes))
-	}
-}
-
-// addCast links performers to a scene through the many-to-many join table.
 func addCast(t *testing.T, db *gorm.DB, scene models.Scene, names ...string) {
 	t.Helper()
 	for _, name := range names {
@@ -425,14 +275,75 @@ func TestOneSharedPerformerIsNotADuplicate(t *testing.T) {
 	}
 }
 
-// TestUnknownReleaseDatesAreNotGrouped guards the other half of the false
-// positives: a missing date was being compared as if it were a date, so every
-// undated scene with the same title and the same performer landed together.
-func TestUnknownReleaseDatesAreNotGrouped(t *testing.T) {
+// TestDuplicateKey pins the rule: the runtime must be identical and the cast must
+// be identical. Anything less is not a duplicate.
+func TestDuplicateKey(t *testing.T) {
+	castA := []string{"Jane Doe", "John Smith"}
+	castB := []string{"Jane Doe"}
+
+	keyA, ok := duplicateKey(30, castA)
+	if !ok {
+		t.Fatal("an exact pair was rejected")
+	}
+	// Order and case must not matter, or the same cast would look different
+	// depending on how the site listed it.
+	keyReordered, ok := duplicateKey(30, []string{"JOHN SMITH", "jane doe"})
+	if !ok || keyReordered != keyA {
+		t.Errorf("cast order or case changed the key: %q vs %q", keyReordered, keyA)
+	}
+
+	// A different runtime is not a duplicate.
+	if other, ok := duplicateKey(31, castA); !ok || other == keyA {
+		t.Error("a one minute difference produced the same key")
+	}
+	// A different cast is not a duplicate.
+	if other, ok := duplicateKey(30, castB); !ok || other == keyA {
+		t.Error("a different cast produced the same key")
+	}
+
+	// Unknown runtime or unknown cast is not a match: "both unknown" is not
+	// evidence of anything.
+	if _, ok := duplicateKey(0, castA); ok {
+		t.Error("a scene with no runtime was accepted")
+	}
+	if _, ok := duplicateKey(30, nil); ok {
+		t.Error("a scene with no cast was accepted")
+	}
+	if _, ok := duplicateKey(30, []string{"  ", ""}); ok {
+		t.Error("a scene with only blank cast names was accepted")
+	}
+}
+
+// TestFindDuplicateScenesMatchesExactCastAndLength is the core case: the same
+// scene scraped from two sites, with the same runtime and the same cast.
+func TestFindDuplicateScenesMatchesExactCastAndLength(t *testing.T) {
 	db := openDuplicateTestDB(t)
 
-	a := addScene(t, db, "slr-1", "Midnight Swim", "slr-originals", time.Time{}, 30, false)
-	b := addScene(t, db, "vrsmash-1", "Midnight Swim", "vrsmash", time.Time{}, 30, false)
+	a := addScene(t, db, "slr-1", "Midnight Swim", "slr-originals", time.Date(2023, time.October, 14, 0, 0, 0, 0, time.UTC), 30, false)
+	b := addScene(t, db, "vrsmash-1", "Midnight Swim", "vrsmash", time.Date(2023, time.October, 14, 0, 0, 0, 0, time.UTC), 30, false)
+	addCast(t, db, a, "Jane Doe", "John Smith")
+	addCast(t, db, b, "John Smith", "Jane Doe") // different order on purpose
+
+	groups, err := findDuplicateScenes(db, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 1 {
+		t.Fatalf("got %d groups, want 1: %+v", len(groups), groups)
+	}
+	if len(groups[0].Scenes) != 2 {
+		t.Fatalf("group has %d scenes, want 2", len(groups[0].Scenes))
+	}
+}
+
+// TestADifferentRuntimeIsNotADuplicate covers the half of the rule that used to
+// be a tolerance instead of an exact comparison.
+func TestADifferentRuntimeIsNotADuplicate(t *testing.T) {
+	db := openDuplicateTestDB(t)
+	day := time.Date(2023, time.October, 14, 0, 0, 0, 0, time.UTC)
+
+	a := addScene(t, db, "slr-1", "Midnight Swim", "slr-originals", day, 30, false)
+	b := addScene(t, db, "vrsmash-1", "Midnight Swim", "vrsmash", day, 31, false)
 	addCast(t, db, a, "Jane Doe", "John Smith")
 	addCast(t, db, b, "Jane Doe", "John Smith")
 
@@ -441,115 +352,72 @@ func TestUnknownReleaseDatesAreNotGrouped(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(groups) != 0 {
-		t.Errorf("undated scenes were grouped as duplicates: %+v", groups)
+		t.Errorf("scenes of different lengths were grouped: %+v", groups)
 	}
 }
 
-// TestSingleWordTitlesAreNotGrouped covers the third source of noise: a title
-// reduced to one word identifies nothing.
-func TestSingleWordTitlesAreNotGrouped(t *testing.T) {
+// TestADifferentCastIsNotADuplicate covers the other half, including the case
+// that caused the worst false positives: the same two performers plus a third
+// one is a different scene, not the same one.
+func TestADifferentCastIsNotADuplicate(t *testing.T) {
 	db := openDuplicateTestDB(t)
 	day := time.Date(2023, time.October, 14, 0, 0, 0, 0, time.UTC)
 
-	addScene(t, db, "slr-1", "Massage", "slr-originals", day, 30, false)
-	addScene(t, db, "vrsmash-1", "Massage", "vrsmash", day, 30, false)
+	a := addScene(t, db, "slr-1", "Midnight Swim", "slr-originals", day, 30, false)
+	b := addScene(t, db, "vrsmash-1", "Midnight Swim", "vrsmash", day, 30, false)
+	addCast(t, db, a, "Jane Doe", "John Smith")
+	addCast(t, db, b, "Jane Doe", "John Smith", "Alex Coal")
 
 	groups, err := findDuplicateScenes(db, 50)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(groups) != 0 {
-		t.Errorf("a one word title was treated as identifying: %+v", groups)
+		t.Errorf("scenes with different casts were grouped: %+v", groups)
 	}
 }
 
-// TestLowConfidenceGroupsAreHidden checks the confidence floor: different
-// sources with only a vague date in common is not worth showing.
-func TestLowConfidenceGroupsAreHidden(t *testing.T) {
+// TestScenesWithoutCastOrRuntimeAreIgnored guards the case where a missing value
+// would otherwise compare equal to another missing value.
+func TestScenesWithoutCastOrRuntimeAreIgnored(t *testing.T) {
 	db := openDuplicateTestDB(t)
+	day := time.Date(2023, time.October, 14, 0, 0, 0, 0, time.UTC)
 
-	// Different sources and a vague date, but the lengths disagree by an hour and
-	// nobody is in both: five points for the sources plus one for the date, which
-	// is below the floor. A matching duration would be real evidence, so the
-	// lengths deliberately do not match.
-	addScene(t, db, "slr-1", "Midnight Swim", "slr-originals", time.Date(2023, time.October, 14, 0, 0, 0, 0, time.UTC), 30, false)
-	addScene(t, db, "vrsmash-1", "Midnight Swim", "vrsmash", time.Date(2023, time.October, 17, 0, 0, 0, 0, time.UTC), 95, false)
+	// Two undated-by-cast scenes: no cast rows at all, same runtime.
+	addScene(t, db, "slr-1", "First", "slr-originals", day, 30, false)
+	addScene(t, db, "vrsmash-1", "Second", "vrsmash", day, 30, false)
+
+	// Two scenes with cast but no runtime.
+	c := addScene(t, db, "slr-2", "Third", "slr-originals", day, 0, false)
+	d := addScene(t, db, "vrsmash-2", "Fourth", "vrsmash", day, 0, false)
+	addCast(t, db, c, "Jane Doe", "John Smith")
+	addCast(t, db, d, "Jane Doe", "John Smith")
 
 	groups, err := findDuplicateScenes(db, 50)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(groups) != 0 {
-		t.Errorf("a low confidence pair was shown: score %d, reasons %v", groups[0].Score, groups[0].Reasons)
+		t.Errorf("scenes missing cast or runtime were grouped: %+v", groups)
 	}
 }
 
-// TestCastPassRequiresTwoSources stops the second pass from reporting one
-// scraper's own scenes as duplicates of each other.
-func TestCastPassRequiresTwoSources(t *testing.T) {
+// TestExactMatchIgnoresTitleAndDate makes the change explicit: under the exact
+// rule two scenes are the same scene even when the sites disagree about the
+// title and the date, because cast and runtime are what decide.
+func TestExactMatchIgnoresTitleAndDate(t *testing.T) {
 	db := openDuplicateTestDB(t)
-	day := time.Date(2023, time.October, 14, 0, 0, 0, 0, time.UTC)
 
-	a := addScene(t, db, "slr-1", "First Scene", "slr-originals", day, 1800, false)
-	b := addScene(t, db, "slr-2", "Second Scene", "slr-originals", day, 1800, false)
-
-	addCast(t, db, a, "Jane Doe")
-	addCast(t, db, b, "Jane Doe")
-
-	groups, err := findDuplicateScenes(db, 50)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(groups) != 0 {
-		t.Errorf("one scraper's own scenes were reported as duplicates: %+v", groups)
-	}
-}
-
-func TestCastPassIgnoresScenesFarApartInTime(t *testing.T) {
-	db := openDuplicateTestDB(t)
-	day := time.Date(2023, time.October, 14, 0, 0, 0, 0, time.UTC)
-
-	a := addScene(t, db, "slr-1", "One Scene", "slr-originals", day, 1800, false)
-	b := addScene(t, db, "vrsmash-1", "Another Scene", "vrsmash", day.AddDate(0, 3, 0), 1800, false)
-
-	addCast(t, db, a, "Jane Doe")
-	addCast(t, db, b, "Jane Doe")
-
-	groups, err := findDuplicateScenes(db, 50)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(groups) != 0 {
-		t.Errorf("scenes months apart were grouped by a shared performer: %+v", groups)
-	}
-}
-
-// TestBothPassesReportAGroupOnce guards the deduplication between the two passes:
-// a pair that shares a title *and* a performer must not appear twice.
-func TestBothPassesReportAGroupOnce(t *testing.T) {
-	db := openDuplicateTestDB(t)
-	day := time.Date(2023, time.October, 14, 0, 0, 0, 0, time.UTC)
-
-	a := addScene(t, db, "slr-1", "Midnight Swim", "slr-originals", day, 1800, false)
-	b := addScene(t, db, "vrsmash-1", "Midnight Swim", "vrsmash", day, 1800, false)
-
-	addCast(t, db, a, "Jane Doe")
-	addCast(t, db, b, "Jane Doe")
+	a := addScene(t, db, "slr-1", "Midnight Swim", "slr-originals", time.Date(2023, time.October, 14, 0, 0, 0, 0, time.UTC), 30, false)
+	b := addScene(t, db, "vrsmash-1", "Midnight Swim Part One", "vrsmash", time.Date(2020, time.January, 2, 0, 0, 0, 0, time.UTC), 30, false)
+	addCast(t, db, a, "Jane Doe", "John Smith")
+	addCast(t, db, b, "Jane Doe", "John Smith")
 
 	groups, err := findDuplicateScenes(db, 50)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(groups) != 1 {
-		t.Fatalf("got %d groups, want the same pair reported once: %+v", len(groups), groups)
-	}
-}
-
-func TestClusterKeyIsOrderIndependent(t *testing.T) {
-	if clusterKey([]uint{3, 1, 2}) != clusterKey([]uint{2, 3, 1}) {
-		t.Error("clusterKey depends on order, so the passes cannot be deduplicated")
-	}
-	if clusterKey([]uint{1, 2}) == clusterKey([]uint{1, 3}) {
-		t.Error("different scenes produced the same key")
+		t.Fatalf("got %d groups, want 1: %+v", len(groups), groups)
 	}
 }

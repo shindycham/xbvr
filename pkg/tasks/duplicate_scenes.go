@@ -62,44 +62,47 @@ type DuplicateGroup struct {
 }
 
 // duplicateTextStopWords carry no identifying weight in a scene title.
-var duplicateTextStopWords = map[string]bool{
-	"the": true, "and": true, "with": true, "from": true, "of": true, "a": true,
-	"an": true, "in": true, "on": true, "at": true, "to": true, "for": true,
-	"her": true, "his": true, "my": true, "vs": true, "feat": true, "featuring": true,
-	"part": true, "scene": true, "vr": true, "xxx": true,
-}
-
-// normaliseDuplicateTitle reduces a title to the words that identify it.
-func normaliseDuplicateTitle(title string) string {
-	fields := strings.FieldsFunc(strings.ToLower(title), func(r rune) bool {
-		return !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9')
-	})
-	kept := make([]string, 0, len(fields))
-	for _, f := range fields {
-		if len(f) < 2 || duplicateTextStopWords[f] {
-			continue
-		}
-		kept = append(kept, f)
-	}
-	return strings.Join(kept, " ")
-}
-
-// duplicateDateWindow is how far apart two release dates may be and still count
-// as the same release. Sites disagree about a scene's date by a day often enough
-// that requiring an exact match would miss real duplicates.
-const duplicateDateWindow = 3 * time.Hour * 24
-
-// MaxDuplicateGroupSize bounds a group. A very common title such as a single
-// word can pull in unrelated scenes, and a group nobody can meaningfully review
-// is worse than no group.
+// MaxDuplicateGroupSize bounds a group. An exact cast and runtime can still be
+// shared by a series of scenes, and a group nobody can review is not useful.
 const MaxDuplicateGroupSize = 12
 
-// FindDuplicateScenes looks for scenes that should probably be one scene.
+// duplicateKey identifies scenes that are the same scene.
 //
-// It groups on the normalised title and then splits by release date, which is
-// high precision: two scenes released within a few days of each other under the
-// same title are almost always the same scene on two sites. Cast and duration
-// only adjust the confidence, they never decide on their own.
+// The rule is exact on purpose: the runtime must be identical and the cast must
+// be identical. Nothing is inferred from a title or a date and there is no
+// confidence to interpret, because looser signals - one performer in common, a
+// title that matched on one word, a missing date compared as though it were a
+// date - produced pairs that were obviously unrelated and made the whole review
+// screen untrustworthy.
+//
+// It reports false for a scene with no runtime or no cast, because "both are
+// unknown" is not a match.
+func duplicateKey(duration int, cast []string) (string, bool) {
+	if duration <= 0 {
+		return "", false
+	}
+
+	names := make([]string, 0, len(cast))
+	seen := map[string]bool{}
+	for _, name := range cast {
+		key := strings.ToLower(strings.TrimSpace(name))
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		names = append(names, key)
+	}
+	if len(names) == 0 {
+		return "", false
+	}
+
+	// Sorted so the order the site happened to list the cast in cannot matter.
+	sort.Strings(names)
+	return strconv.Itoa(duration) + "|" + strings.Join(names, "|"), true
+}
+
+// FindDuplicateScenes returns sets of scenes that are the same scene listed more
+// than once.
 func FindDuplicateScenes(maxGroups int) ([]DuplicateGroup, error) {
 	db, err := models.GetDB()
 	if err != nil {
@@ -112,12 +115,6 @@ func FindDuplicateScenes(maxGroups int) ([]DuplicateGroup, error) {
 
 // findDuplicateScenes does the work against a given handle, so it can be tested
 // without the application database.
-//
-// Two passes feed one set of candidate groups. The first matches on the
-// normalised title and release date, which is precise. The second catches the
-// same scene listed under different titles by different sites, using a shared
-// performer and a near-identical date. Anything either finds is put in front of
-// a person, because neither signal is good enough to merge on its own.
 func findDuplicateScenes(db *gorm.DB, maxGroups int) ([]DuplicateGroup, error) {
 	type row struct {
 		ID          uint
@@ -135,145 +132,93 @@ func findDuplicateScenes(db *gorm.DB, maxGroups int) ([]DuplicateGroup, error) {
 	var rows []row
 	if err := db.Table("scenes").
 		Select("id, scene_id, title, site, studio, scraper_id, release_date, duration, cover_url, is_hidden").
-		Where("title <> ''").
+		Where("title <> '' and duration > 0").
 		Scan(&rows).Error; err != nil {
 		return nil, err
 	}
-
-	rowByID := make(map[uint]row, len(rows))
-	byTitle := map[string][]row{}
-	for _, r := range rows {
-		rowByID[r.ID] = r
-
-		// A scene with no release date cannot be placed in time, and two scenes
-		// with no date are not evidence of anything: treating "unknown" as "the
-		// same day" is what grouped unrelated scenes together.
-		if r.ReleaseDate.IsZero() {
-			continue
-		}
-
-		key := normaliseDuplicateTitle(r.Title)
-		// A single word is not a title. "Massage" identifies nothing, and
-		// grouping on it produced pairs that were plainly unrelated.
-		if len(strings.Fields(key)) < 2 {
-			continue
-		}
-		byTitle[key] = append(byTitle[key], r)
+	if len(rows) == 0 {
+		return nil, nil
 	}
 
-	var clusters [][]uint
-
-	// Pass one: same normalised title, released within a few days of each other.
-	for _, scenes := range byTitle {
-		// A title shared by a great many scenes is not identifying anything.
-		if len(scenes) < 2 || len(scenes) > MaxDuplicateGroupSize*4 {
-			continue
-		}
-		sort.Slice(scenes, func(i, j int) bool { return scenes[i].ReleaseDate.Before(scenes[j].ReleaseDate) })
-
-		var current []row
-		flush := func() {
-			if len(current) >= 2 && len(current) <= MaxDuplicateGroupSize {
-				ids := make([]uint, 0, len(current))
-				for _, r := range current {
-					ids = append(ids, r.ID)
-				}
-				clusters = append(clusters, ids)
-			}
-			current = nil
-		}
-		for _, r := range scenes {
-			// Compared against the first of the run so a long series of near
-			// dates cannot drift into grouping unrelated scenes.
-			if len(current) > 0 && r.ReleaseDate.Sub(current[0].ReleaseDate) > duplicateDateWindow {
-				flush()
-			}
-			current = append(current, r)
-		}
-		flush()
+	// The cast is needed for every scene now, since it is half of the rule.
+	type castRow struct {
+		SceneID uint
+		Name    string
 	}
-
-	// Pass two: different titles, same performer, same few days.
-	clusters = append(clusters, castDateClusters(db)...)
-
-	// The two passes can describe the same set of scenes; report each once.
-	seen := map[string]bool{}
-	unique := make([][]uint, 0, len(clusters))
-	for _, ids := range clusters {
-		key := clusterKey(ids)
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		unique = append(unique, ids)
+	var castRows []castRow
+	if err := db.Table("scene_cast").
+		Select("scene_cast.scene_id as scene_id, actors.name as name").
+		Joins("join actors on actors.id = scene_cast.actor_id").
+		Scan(&castRows).Error; err != nil {
+		return nil, err
 	}
-
-	// Detail is loaded only once something actually needs showing. For a library
-	// of tens of thousands of scenes the cast join is the expensive part, and
-	// most scans find nothing.
 	castByScene := map[uint][]string{}
+	for _, c := range castRows {
+		castByScene[c.SceneID] = append(castByScene[c.SceneID], c.Name)
+	}
+
+	byKey := map[string][]row{}
+	for _, r := range rows {
+		key, ok := duplicateKey(r.Duration, castByScene[r.ID])
+		if !ok {
+			continue
+		}
+		byKey[key] = append(byKey[key], r)
+	}
+
+	// Only scenes that are in a group of two or more are worth describing.
+	type countRow struct {
+		SceneID uint
+		Type    string
+		N       int
+	}
+	var counts []countRow
+	if err := db.Table("files").
+		Select("scene_id, type, count(*) as n").
+		Where("scene_id <> 0").
+		Group("scene_id, type").
+		Scan(&counts).Error; err != nil {
+		return nil, err
+	}
 	fileCount := map[uint]int{}
 	scriptCount := map[uint]int{}
+	for _, c := range counts {
+		switch c.Type {
+		case "video":
+			fileCount[c.SceneID] += c.N
+		case "script":
+			scriptCount[c.SceneID] += c.N
+		}
+	}
+
+	var merges []models.SceneMerge
+	if err := db.Find(&merges).Error; err != nil {
+		return nil, err
+	}
 	mergedInto := map[uint]uint{}
-	if len(unique) > 0 {
-		type castRow struct {
-			SceneID uint
-			Name    string
-		}
-		var cast []castRow
-		if err := db.Table("scene_cast").
-			Select("scene_cast.scene_id as scene_id, actors.name as name").
-			Joins("join actors on actors.id = scene_cast.actor_id").
-			Scan(&cast).Error; err != nil {
-			return nil, err
-		}
-		for _, c := range cast {
-			castByScene[c.SceneID] = append(castByScene[c.SceneID], c.Name)
-		}
-
-		type countRow struct {
-			SceneID uint
-			Type    string
-			N       int
-		}
-		var counts []countRow
-		if err := db.Table("files").
-			Select("scene_id, type, count(*) as n").
-			Where("scene_id <> 0").
-			Group("scene_id, type").
-			Scan(&counts).Error; err != nil {
-			return nil, err
-		}
-		for _, c := range counts {
-			switch c.Type {
-			case "video":
-				fileCount[c.SceneID] += c.N
-			case "script":
-				scriptCount[c.SceneID] += c.N
-			}
-		}
-
-		var merges []models.SceneMerge
-		if err := db.Find(&merges).Error; err != nil {
-			return nil, err
-		}
-		for _, m := range merges {
-			mergedInto[m.DuplicateSceneID] = m.PrimarySceneID
-		}
+	for _, m := range merges {
+		mergedInto[m.DuplicateSceneID] = m.PrimarySceneID
 	}
 
 	var groups []DuplicateGroup
-	for _, ids := range unique {
-		group := DuplicateGroup{Scenes: make([]DuplicateScene, 0, len(ids))}
-		for _, id := range ids {
-			r, ok := rowByID[id]
-			if !ok {
-				continue
-			}
-			if group.Title == "" {
-				group.Title = r.Title
-				group.Key = normaliseDuplicateTitle(r.Title)
-			}
+	for key, scenes := range byKey {
+		if len(scenes) < 2 {
+			continue
+		}
+		if len(scenes) > MaxDuplicateGroupSize {
+			scenes = scenes[:MaxDuplicateGroupSize]
+		}
+
+		sort.Slice(scenes, func(i, j int) bool {
+			return scenes[i].ReleaseDate.After(scenes[j].ReleaseDate)
+		})
+
+		group := DuplicateGroup{
+			Key:    key,
+			Title:  scenes[0].Title,
+			Scenes: make([]DuplicateScene, 0, len(scenes)),
+		}
+		for _, r := range scenes {
 			group.Scenes = append(group.Scenes, DuplicateScene{
 				ID:          r.ID,
 				SceneID:     r.SceneID,
@@ -291,17 +236,15 @@ func findDuplicateScenes(db *gorm.DB, maxGroups int) ([]DuplicateGroup, error) {
 				MergedInto:  mergedInto[r.ID],
 			})
 		}
-		if len(group.Scenes) < 2 {
-			continue
-		}
-		group.Score, group.Reasons = scoreDuplicateGroup(group.Scenes)
-		if group.Score < MinDuplicateScore {
-			continue
-		}
+
+		// Score is only used to order the list now: a group with more performers
+		// in common is a stronger coincidence than one with a single name.
+		group.Score = 10 + len(strings.Split(key, "|")) - 1
+		group.Reasons = []string{"identical cast", "identical length"}
 		groups = append(groups, group)
 	}
 
-	// Most scenes first, then the most confident, then newest.
+	// Most scenes first, then the strongest, then newest.
 	sort.Slice(groups, func(i, j int) bool {
 		if len(groups[i].Scenes) != len(groups[j].Scenes) {
 			return len(groups[i].Scenes) > len(groups[j].Scenes)
@@ -316,273 +259,6 @@ func findDuplicateScenes(db *gorm.DB, maxGroups int) ([]DuplicateGroup, error) {
 		groups = groups[:maxGroups]
 	}
 	return groups, nil
-}
-
-// clusterKey is a stable identity for a set of scenes, so the two detection
-// passes cannot report the same group twice in different orders.
-func clusterKey(ids []uint) string {
-	sorted := append([]uint{}, ids...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
-
-	parts := make([]string, 0, len(sorted))
-	for _, id := range sorted {
-		parts = append(parts, strconv.FormatUint(uint64(id), 10))
-	}
-	return strings.Join(parts, ",")
-}
-
-// castDateClusters finds groups the title pass cannot see: the same scene listed
-// by two sites under different titles.
-//
-// It keys on a *pair* of performers rather than one. A single shared performer
-// is not evidence of anything - performers appear in many scenes, and
-// aggregators publish on the same dates - so matching on one produced pairs that
-// had nothing in common but a cast member. Two performers appearing together in
-// scenes released the same week is a different order of evidence.
-//
-// Scenes without a release date are skipped: see the note in findDuplicateScenes.
-func castDateClusters(db *gorm.DB) [][]uint {
-	type castRow struct {
-		SceneID   uint
-		ScraperID string
-		Site      string
-		Released  time.Time
-		Name      string
-	}
-
-	var rows []castRow
-	if err := db.Table("scene_cast").
-		Select("scene_cast.scene_id as scene_id, actors.name as name, " +
-			"scenes.scraper_id as scraper_id, scenes.site as site, scenes.release_date as released").
-		Joins("join actors on actors.id = scene_cast.actor_id").
-		Joins("join scenes on scenes.id = scene_cast.scene_id").
-		Where("scenes.title <> ''").
-		Scan(&rows).Error; err != nil {
-		return nil
-	}
-
-	type sceneInfo struct {
-		scraperID string
-		site      string
-		released  time.Time
-	}
-	info := map[uint]sceneInfo{}
-	cast := map[uint][]string{}
-	for _, r := range rows {
-		name := strings.ToLower(strings.TrimSpace(r.Name))
-		if name == "" {
-			continue
-		}
-		if _, seen := info[r.SceneID]; !seen {
-			info[r.SceneID] = sceneInfo{scraperID: r.ScraperID, site: r.Site, released: r.Released}
-		}
-		cast[r.SceneID] = append(cast[r.SceneID], name)
-	}
-
-	// Group scenes by each pair of performers they share.
-	byPair := map[string][]uint{}
-	for sceneID, names := range cast {
-		if len(names) < 2 {
-			continue
-		}
-		unique := make([]string, 0, len(names))
-		seen := map[string]bool{}
-		for _, n := range names {
-			if !seen[n] {
-				seen[n] = true
-				unique = append(unique, n)
-			}
-		}
-		sort.Strings(unique)
-		for i := 0; i < len(unique); i++ {
-			for j := i + 1; j < len(unique); j++ {
-				key := unique[i] + "|" + unique[j]
-				byPair[key] = append(byPair[key], sceneID)
-			}
-		}
-	}
-
-	var clusters [][]uint
-	for _, sceneIDs := range byPair {
-		if len(sceneIDs) < 2 {
-			continue
-		}
-
-		sorted := make([]uint, 0, len(sceneIDs))
-		for _, id := range sceneIDs {
-			if !info[id].released.IsZero() {
-				sorted = append(sorted, id)
-			}
-		}
-		if len(sorted) < 2 {
-			continue
-		}
-		sort.Slice(sorted, func(i, j int) bool {
-			return info[sorted[i]].released.Before(info[sorted[j]].released)
-		})
-
-		var current []uint
-		flush := func() {
-			if len(current) >= 2 && len(current) <= MaxDuplicateGroupSize {
-				sources := map[string]bool{}
-				for _, id := range current {
-					source := info[id].scraperID
-					if source == "" {
-						source = info[id].site
-					}
-					sources[source] = true
-				}
-				// One source means one scraper listing these performers twice in a
-				// week, which is not a duplicate worth reviewing.
-				if len(sources) > 1 {
-					clusters = append(clusters, append([]uint{}, current...))
-				}
-			}
-			current = nil
-		}
-		for _, id := range sorted {
-			if len(current) > 0 && info[id].released.Sub(info[current[0]].released) > duplicateDateWindow {
-				flush()
-			}
-			current = append(current, id)
-		}
-		flush()
-	}
-	return clusters
-}
-
-// MinDuplicateScore is the confidence below which a group is not worth showing.
-//
-// Reporting every cluster that merely shared a title produced candidates that
-// were obviously unrelated, which makes the whole feature untrustworthy: a
-// review list nobody believes is worse than a shorter one.
-const MinDuplicateScore = 7
-
-// scoreDuplicateGroup rates how sure we are that these scenes are one scene.
-func scoreDuplicateGroup(scenes []DuplicateScene) (int, []string) {
-	if len(scenes) < 2 {
-		return 0, nil
-	}
-
-	score := 0
-	var reasons []string
-
-	// Different sources is the whole point: two rows from the same scraper are
-	// more likely a scraper bug than a duplicate.
-	sources := map[string]bool{}
-	for _, s := range scenes {
-		source := s.ScraperID
-		if source == "" {
-			source = s.Site
-		}
-		sources[source] = true
-	}
-	if len(sources) > 1 {
-		score += 5
-		reasons = append(reasons, "different sources")
-	}
-
-	// Dates agreeing closely is strong evidence, but an unknown date is not
-	// evidence at all: two scenes with no date are not "on the same day".
-	if scenes[0].ReleaseDate.IsZero() {
-		reasons = append(reasons, "unknown release date")
-	} else {
-		spread := scenes[len(scenes)-1].ReleaseDate.Sub(scenes[0].ReleaseDate)
-		switch {
-		case spread == 0:
-			score += 4
-			reasons = append(reasons, "same release date")
-		case spread <= 36*time.Hour:
-			score += 3
-			reasons = append(reasons, "release dates within a day")
-		default:
-			score += 1
-			reasons = append(reasons, "release dates close")
-		}
-	}
-
-	// Performers in common confirm a match. One is a hint; two is strong, which
-	// is why the cast pass requires a pair before it will propose anything.
-	if shared, _ := sharedCastPair(scenes); shared > 0 {
-		points := shared * 2
-		if points > 4 {
-			points = 4
-		}
-		score += points
-		if shared > 1 {
-			reasons = append(reasons, fmt.Sprintf("%d shared performers", shared))
-		} else {
-			reasons = append(reasons, "shared performer")
-		}
-	}
-
-	// Durations that agree rule out a trailer sitting next to the feature.
-	if durationsAgree(scenes) {
-		score += 2
-		reasons = append(reasons, "matching duration")
-	}
-
-	return score, reasons
-}
-
-// sharedCastPair counts how many performers appear in more than one of the
-// scenes, and names one of them.
-func sharedCastPair(scenes []DuplicateScene) (int, string) {
-	if len(scenes) == 0 {
-		return 0, ""
-	}
-	counts := map[string]int{}
-	for _, s := range scenes {
-		seen := map[string]bool{}
-		for _, name := range s.Cast {
-			key := strings.ToLower(strings.TrimSpace(name))
-			if key == "" || seen[key] {
-				continue
-			}
-			seen[key] = true
-			counts[key]++
-		}
-	}
-	total := 0
-	first := ""
-	for name, n := range counts {
-		if n > 1 {
-			total++
-			if first == "" {
-				first = name
-			}
-		}
-	}
-	return total, first
-}
-
-// durationsAgree reports whether every scene with a known duration is within a
-// couple of minutes of the others.
-func durationsAgree(scenes []DuplicateScene) bool {
-	var known []int
-	for _, s := range scenes {
-		if s.Duration > 0 {
-			known = append(known, s.Duration)
-		}
-	}
-	if len(known) < 2 {
-		return false
-	}
-	min, max := known[0], known[0]
-	for _, d := range known {
-		if d < min {
-			min = d
-		}
-		if d > max {
-			max = d
-		}
-	}
-	// Two minutes of slack. Durations are in minutes, not seconds - the scrapers
-	// divide what the site reports by 60 - so anything larger would treat a
-	// 30 minute scene and a two and a half hour one as the same length. Sites
-	// also round differently, and a trailer is minutes shorter rather than
-	// seconds.
-	return max-min <= 2
 }
 
 // MergeScenes combines duplicate scenes into a primary one.

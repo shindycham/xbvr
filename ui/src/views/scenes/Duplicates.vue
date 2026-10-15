@@ -33,8 +33,10 @@
       <div class="is-flex" style="align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5em;">
         <p class="title is-6" style="margin-bottom:0">{{ group.title || group.key }}</p>
         <p>
+          <!-- The rule is exact, so a confidence number would not say anything:
+               the reasons are the whole story. -->
           <b-tag v-for="reason in (group.reasons || [])" :key="reason" type="is-light" style="margin-left:0.25em">{{ reason }}</b-tag>
-          <b-tag type="is-info" style="margin-left:0.25em">{{ $t('Score') }} {{ group.score }}</b-tag>
+          <b-tag type="is-info" style="margin-left:0.25em">{{ (group.scenes || []).length }} {{ $t('copies') }}</b-tag>
         </p>
       </div>
 
@@ -389,8 +391,19 @@ export default {
     // coverStyle renders a cover as a background image inside a ratio box, the
     // same approach the scene grid uses, so it is cropped rather than squashed.
     coverStyle (scene) {
+      // The setting is stored as "16:9", which is not a valid CSS aspect-ratio:
+      // CSS wants "16 / 9". Passing the colon form through made the declaration
+      // invalid, so the box had no height at all and nothing was visible.
+      const parts = String(this.$store.state.optionsWeb.web.sceneCardAspectRatio || '16:9').split(':')
+      const ratio = parts.length === 2
+        ? parts[0].trim() + ' / ' + parts[1].trim()
+        : '16 / 9'
+
       const style = {
-        aspectRatio: this.$store.state.optionsWeb.web.sceneCardAspectRatio || '16/9'
+        aspectRatio: ratio,
+        // A floor as well, so the box cannot collapse to nothing even if the
+        // ratio is unusable for some reason.
+        minHeight: '140px'
       }
       if (scene && scene.cover_url) {
         style.backgroundImage = `url("${this.imageURL(scene.cover_url)}")`
