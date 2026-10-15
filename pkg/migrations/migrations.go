@@ -2387,6 +2387,14 @@ func Migrate(migrateTo string) {
 				return tx.Table("scenes").AddIndex("idx_scenes_scraper_id", "scraper_id").Error
 			},
 		},
+		{
+			ID: "0088-scene-merges",
+			Migrate: func(tx *gorm.DB) error {
+				// Records which scenes have been merged into which, so a merge can
+				// be undone and nothing is destroyed by combining duplicates.
+				return tx.AutoMigrate(&models.SceneMerge{}).Error
+			},
+		},
 	}
 
 	// Wrap migrations to automatically track progress

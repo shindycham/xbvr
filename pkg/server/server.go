@@ -108,6 +108,7 @@ func StartServer(version, commit, branch, date string) {
 	restful.Add(api.InconsistenciesResource{}.WebService())
 	restful.Add(api.DownloadResource{}.WebService())
 	restful.Add(api.GrabResource{}.WebService())
+	restful.Add(api.DuplicateResource{}.WebService())
 
 	restConfig := restfulspec.Config{
 		WebServices: restful.RegisteredWebServices(),
