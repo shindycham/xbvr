@@ -370,13 +370,9 @@ func TestFindDuplicateScenesCatchesDifferingTitles(t *testing.T) {
 	a := addScene(t, db, "slr-1", "Midnight Swim", "slr-originals", day, 1800, false)
 	b := addScene(t, db, "vrsmash-1", "Midnight Swim Part One", "vrsmash", day, 1800, false)
 
-	actor := models.Actor{Name: "Jane Doe"}
-	db.Create(&actor)
-	for _, scene := range []models.Scene{a, b} {
-		if err := db.Exec("insert into scene_cast (scene_id, actor_id) values (?, ?)", scene.ID, actor.ID).Error; err != nil {
-			t.Fatal(err)
-		}
-	}
+	// Two performers in common, which is what the cast pass now requires.
+	addCast(t, db, a, "Jane Doe", "John Smith")
+	addCast(t, db, b, "Jane Doe", "John Smith")
 
 	groups, err := findDuplicateScenes(db, 50)
 	if err != nil {
@@ -390,6 +386,104 @@ func TestFindDuplicateScenesCatchesDifferingTitles(t *testing.T) {
 	}
 }
 
+// addCast links performers to a scene through the many-to-many join table.
+func addCast(t *testing.T, db *gorm.DB, scene models.Scene, names ...string) {
+	t.Helper()
+	for _, name := range names {
+		var actor models.Actor
+		if err := db.Where(&models.Actor{Name: name}).FirstOrCreate(&actor).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Exec("insert into scene_cast (scene_id, actor_id) values (?, ?)", scene.ID, actor.ID).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// TestOneSharedPerformerIsNotADuplicate is the regression test for the false
+// positives this feature shipped with. Performers appear in many scenes and
+// aggregators publish on the same dates, so a single performer in common on the
+// same day says almost nothing - and treating it as a duplicate produced pairs
+// that were plainly unrelated.
+func TestOneSharedPerformerIsNotADuplicate(t *testing.T) {
+	db := openDuplicateTestDB(t)
+	day := time.Date(2023, time.October, 14, 0, 0, 0, 0, time.UTC)
+
+	// Same performer, same day, different studios, different titles: two
+	// genuinely different scenes.
+	a := addScene(t, db, "vrbangers-1", "Midnight Swim", "vrbangers", day, 30, false)
+	b := addScene(t, db, "wankzvr-1", "Something Else Entirely", "wankzvr", day, 32, false)
+	addCast(t, db, a, "Jane Doe", "Alex Coal")
+	addCast(t, db, b, "Jane Doe", "Someone Else")
+
+	groups, err := findDuplicateScenes(db, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 0 {
+		t.Errorf("scenes sharing one performer were reported as duplicates: %+v", groups)
+	}
+}
+
+// TestUnknownReleaseDatesAreNotGrouped guards the other half of the false
+// positives: a missing date was being compared as if it were a date, so every
+// undated scene with the same title and the same performer landed together.
+func TestUnknownReleaseDatesAreNotGrouped(t *testing.T) {
+	db := openDuplicateTestDB(t)
+
+	a := addScene(t, db, "slr-1", "Midnight Swim", "slr-originals", time.Time{}, 30, false)
+	b := addScene(t, db, "vrsmash-1", "Midnight Swim", "vrsmash", time.Time{}, 30, false)
+	addCast(t, db, a, "Jane Doe", "John Smith")
+	addCast(t, db, b, "Jane Doe", "John Smith")
+
+	groups, err := findDuplicateScenes(db, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 0 {
+		t.Errorf("undated scenes were grouped as duplicates: %+v", groups)
+	}
+}
+
+// TestSingleWordTitlesAreNotGrouped covers the third source of noise: a title
+// reduced to one word identifies nothing.
+func TestSingleWordTitlesAreNotGrouped(t *testing.T) {
+	db := openDuplicateTestDB(t)
+	day := time.Date(2023, time.October, 14, 0, 0, 0, 0, time.UTC)
+
+	addScene(t, db, "slr-1", "Massage", "slr-originals", day, 30, false)
+	addScene(t, db, "vrsmash-1", "Massage", "vrsmash", day, 30, false)
+
+	groups, err := findDuplicateScenes(db, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 0 {
+		t.Errorf("a one word title was treated as identifying: %+v", groups)
+	}
+}
+
+// TestLowConfidenceGroupsAreHidden checks the confidence floor: different
+// sources with only a vague date in common is not worth showing.
+func TestLowConfidenceGroupsAreHidden(t *testing.T) {
+	db := openDuplicateTestDB(t)
+
+	// Different sources and a vague date, but the lengths disagree by an hour and
+	// nobody is in both: five points for the sources plus one for the date, which
+	// is below the floor. A matching duration would be real evidence, so the
+	// lengths deliberately do not match.
+	addScene(t, db, "slr-1", "Midnight Swim", "slr-originals", time.Date(2023, time.October, 14, 0, 0, 0, 0, time.UTC), 30, false)
+	addScene(t, db, "vrsmash-1", "Midnight Swim", "vrsmash", time.Date(2023, time.October, 17, 0, 0, 0, 0, time.UTC), 95, false)
+
+	groups, err := findDuplicateScenes(db, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 0 {
+		t.Errorf("a low confidence pair was shown: score %d, reasons %v", groups[0].Score, groups[0].Reasons)
+	}
+}
+
 // TestCastPassRequiresTwoSources stops the second pass from reporting one
 // scraper's own scenes as duplicates of each other.
 func TestCastPassRequiresTwoSources(t *testing.T) {
@@ -399,11 +493,8 @@ func TestCastPassRequiresTwoSources(t *testing.T) {
 	a := addScene(t, db, "slr-1", "First Scene", "slr-originals", day, 1800, false)
 	b := addScene(t, db, "slr-2", "Second Scene", "slr-originals", day, 1800, false)
 
-	actor := models.Actor{Name: "Jane Doe"}
-	db.Create(&actor)
-	for _, scene := range []models.Scene{a, b} {
-		db.Exec("insert into scene_cast (scene_id, actor_id) values (?, ?)", scene.ID, actor.ID)
-	}
+	addCast(t, db, a, "Jane Doe")
+	addCast(t, db, b, "Jane Doe")
 
 	groups, err := findDuplicateScenes(db, 50)
 	if err != nil {
@@ -421,11 +512,8 @@ func TestCastPassIgnoresScenesFarApartInTime(t *testing.T) {
 	a := addScene(t, db, "slr-1", "One Scene", "slr-originals", day, 1800, false)
 	b := addScene(t, db, "vrsmash-1", "Another Scene", "vrsmash", day.AddDate(0, 3, 0), 1800, false)
 
-	actor := models.Actor{Name: "Jane Doe"}
-	db.Create(&actor)
-	for _, scene := range []models.Scene{a, b} {
-		db.Exec("insert into scene_cast (scene_id, actor_id) values (?, ?)", scene.ID, actor.ID)
-	}
+	addCast(t, db, a, "Jane Doe")
+	addCast(t, db, b, "Jane Doe")
 
 	groups, err := findDuplicateScenes(db, 50)
 	if err != nil {
@@ -445,11 +533,8 @@ func TestBothPassesReportAGroupOnce(t *testing.T) {
 	a := addScene(t, db, "slr-1", "Midnight Swim", "slr-originals", day, 1800, false)
 	b := addScene(t, db, "vrsmash-1", "Midnight Swim", "vrsmash", day, 1800, false)
 
-	actor := models.Actor{Name: "Jane Doe"}
-	db.Create(&actor)
-	for _, scene := range []models.Scene{a, b} {
-		db.Exec("insert into scene_cast (scene_id, actor_id) values (?, ?)", scene.ID, actor.ID)
-	}
+	addCast(t, db, a, "Jane Doe")
+	addCast(t, db, b, "Jane Doe")
 
 	groups, err := findDuplicateScenes(db, 50)
 	if err != nil {

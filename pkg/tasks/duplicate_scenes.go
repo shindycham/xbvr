@@ -144,8 +144,18 @@ func findDuplicateScenes(db *gorm.DB, maxGroups int) ([]DuplicateGroup, error) {
 	byTitle := map[string][]row{}
 	for _, r := range rows {
 		rowByID[r.ID] = r
+
+		// A scene with no release date cannot be placed in time, and two scenes
+		// with no date are not evidence of anything: treating "unknown" as "the
+		// same day" is what grouped unrelated scenes together.
+		if r.ReleaseDate.IsZero() {
+			continue
+		}
+
 		key := normaliseDuplicateTitle(r.Title)
-		if key == "" {
+		// A single word is not a title. "Massage" identifies nothing, and
+		// grouping on it produced pairs that were plainly unrelated.
+		if len(strings.Fields(key)) < 2 {
 			continue
 		}
 		byTitle[key] = append(byTitle[key], r)
@@ -285,6 +295,9 @@ func findDuplicateScenes(db *gorm.DB, maxGroups int) ([]DuplicateGroup, error) {
 			continue
 		}
 		group.Score, group.Reasons = scoreDuplicateGroup(group.Scenes)
+		if group.Score < MinDuplicateScore {
+			continue
+		}
 		groups = append(groups, group)
 	}
 
@@ -319,12 +332,15 @@ func clusterKey(ids []uint) string {
 }
 
 // castDateClusters finds groups the title pass cannot see: the same scene listed
-// by two sites under different titles, recognised by a shared performer and a
-// near-identical release date.
+// by two sites under different titles.
 //
-// Aggregators rename scenes often enough that title matching alone misses real
-// duplicates, and one performer appearing on two sites on the same day is a
-// strong enough signal to put in front of a person.
+// It keys on a *pair* of performers rather than one. A single shared performer
+// is not evidence of anything - performers appear in many scenes, and
+// aggregators publish on the same dates - so matching on one produced pairs that
+// had nothing in common but a cast member. Two performers appearing together in
+// scenes released the same week is a different order of evidence.
+//
+// Scenes without a release date are skipped: see the note in findDuplicateScenes.
 func castDateClusters(db *gorm.DB) [][]uint {
 	type castRow struct {
 		SceneID   uint
@@ -345,53 +361,102 @@ func castDateClusters(db *gorm.DB) [][]uint {
 		return nil
 	}
 
-	byActor := map[string][]castRow{}
+	type sceneInfo struct {
+		scraperID string
+		site      string
+		released  time.Time
+	}
+	info := map[uint]sceneInfo{}
+	cast := map[uint][]string{}
 	for _, r := range rows {
 		name := strings.ToLower(strings.TrimSpace(r.Name))
 		if name == "" {
 			continue
 		}
-		byActor[name] = append(byActor[name], r)
+		if _, seen := info[r.SceneID]; !seen {
+			info[r.SceneID] = sceneInfo{scraperID: r.ScraperID, site: r.Site, released: r.Released}
+		}
+		cast[r.SceneID] = append(cast[r.SceneID], name)
+	}
+
+	// Group scenes by each pair of performers they share.
+	byPair := map[string][]uint{}
+	for sceneID, names := range cast {
+		if len(names) < 2 {
+			continue
+		}
+		unique := make([]string, 0, len(names))
+		seen := map[string]bool{}
+		for _, n := range names {
+			if !seen[n] {
+				seen[n] = true
+				unique = append(unique, n)
+			}
+		}
+		sort.Strings(unique)
+		for i := 0; i < len(unique); i++ {
+			for j := i + 1; j < len(unique); j++ {
+				key := unique[i] + "|" + unique[j]
+				byPair[key] = append(byPair[key], sceneID)
+			}
+		}
 	}
 
 	var clusters [][]uint
-	for _, scenes := range byActor {
-		if len(scenes) < 2 {
+	for _, sceneIDs := range byPair {
+		if len(sceneIDs) < 2 {
 			continue
 		}
-		sort.Slice(scenes, func(i, j int) bool { return scenes[i].Released.Before(scenes[j].Released) })
 
-		var current []castRow
+		sorted := make([]uint, 0, len(sceneIDs))
+		for _, id := range sceneIDs {
+			if !info[id].released.IsZero() {
+				sorted = append(sorted, id)
+			}
+		}
+		if len(sorted) < 2 {
+			continue
+		}
+		sort.Slice(sorted, func(i, j int) bool {
+			return info[sorted[i]].released.Before(info[sorted[j]].released)
+		})
+
+		var current []uint
 		flush := func() {
 			if len(current) >= 2 && len(current) <= MaxDuplicateGroupSize {
 				sources := map[string]bool{}
-				ids := make([]uint, 0, len(current))
-				for _, r := range current {
-					source := r.ScraperID
+				for _, id := range current {
+					source := info[id].scraperID
 					if source == "" {
-						source = r.Site
+						source = info[id].site
 					}
 					sources[source] = true
-					ids = append(ids, r.SceneID)
 				}
-				// One source means one scraper listing the same performer twice on
-				// a day, which is not a duplicate worth reviewing.
+				// One source means one scraper listing these performers twice in a
+				// week, which is not a duplicate worth reviewing.
 				if len(sources) > 1 {
-					clusters = append(clusters, ids)
+					clusters = append(clusters, append([]uint{}, current...))
 				}
 			}
 			current = nil
 		}
-		for _, r := range scenes {
-			if len(current) > 0 && r.Released.Sub(current[0].Released) > duplicateDateWindow {
+		for _, id := range sorted {
+			if len(current) > 0 && info[id].released.Sub(info[current[0]].released) > duplicateDateWindow {
 				flush()
 			}
-			current = append(current, r)
+			current = append(current, id)
 		}
 		flush()
 	}
 	return clusters
 }
+
+// MinDuplicateScore is the confidence below which a group is not worth showing.
+//
+// Reporting every cluster that merely shared a title produced candidates that
+// were obviously unrelated, which makes the whole feature untrustworthy: a
+// review list nobody believes is worse than a shorter one.
+const MinDuplicateScore = 7
 
 // scoreDuplicateGroup rates how sure we are that these scenes are one scene.
 func scoreDuplicateGroup(scenes []DuplicateScene) (int, []string) {
@@ -417,25 +482,38 @@ func scoreDuplicateGroup(scenes []DuplicateScene) (int, []string) {
 		reasons = append(reasons, "different sources")
 	}
 
-	// Dates agreeing closely is strong evidence.
-	spread := scenes[len(scenes)-1].ReleaseDate.Sub(scenes[0].ReleaseDate)
-	switch {
-	case spread == 0:
-		score += 4
-		reasons = append(reasons, "same release date")
-	case spread <= 36*time.Hour:
-		score += 3
-		reasons = append(reasons, "release dates within a day")
-	default:
-		score += 1
-		reasons = append(reasons, "release dates close")
+	// Dates agreeing closely is strong evidence, but an unknown date is not
+	// evidence at all: two scenes with no date are not "on the same day".
+	if scenes[0].ReleaseDate.IsZero() {
+		reasons = append(reasons, "unknown release date")
+	} else {
+		spread := scenes[len(scenes)-1].ReleaseDate.Sub(scenes[0].ReleaseDate)
+		switch {
+		case spread == 0:
+			score += 4
+			reasons = append(reasons, "same release date")
+		case spread <= 36*time.Hour:
+			score += 3
+			reasons = append(reasons, "release dates within a day")
+		default:
+			score += 1
+			reasons = append(reasons, "release dates close")
+		}
 	}
 
-	// A shared performer confirms it, but is never required: sites disagree on
-	// names and on whether the cast is listed at all.
-	if shared, _ := sharedCast(scenes); shared > 0 {
-		score += 2
-		reasons = append(reasons, "shared cast")
+	// Performers in common confirm a match. One is a hint; two is strong, which
+	// is why the cast pass requires a pair before it will propose anything.
+	if shared, _ := sharedCastPair(scenes); shared > 0 {
+		points := shared * 2
+		if points > 4 {
+			points = 4
+		}
+		score += points
+		if shared > 1 {
+			reasons = append(reasons, fmt.Sprintf("%d shared performers", shared))
+		} else {
+			reasons = append(reasons, "shared performer")
+		}
 	}
 
 	// Durations that agree rule out a trailer sitting next to the feature.
@@ -447,7 +525,9 @@ func scoreDuplicateGroup(scenes []DuplicateScene) (int, []string) {
 	return score, reasons
 }
 
-func sharedCast(scenes []DuplicateScene) (int, string) {
+// sharedCastPair counts how many performers appear in more than one of the
+// scenes, and names one of them.
+func sharedCastPair(scenes []DuplicateScene) (int, string) {
 	if len(scenes) == 0 {
 		return 0, ""
 	}
@@ -463,12 +543,17 @@ func sharedCast(scenes []DuplicateScene) (int, string) {
 			counts[key]++
 		}
 	}
+	total := 0
+	first := ""
 	for name, n := range counts {
 		if n > 1 {
-			return n, name
+			total++
+			if first == "" {
+				first = name
+			}
 		}
 	}
-	return 0, ""
+	return total, first
 }
 
 // durationsAgree reports whether every scene with a known duration is within a

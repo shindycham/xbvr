@@ -58,16 +58,13 @@
             </b-radio>
 
             <div style="margin-top:0.5em">
-              <img
-                v-if="scene.cover_url"
-                :src="imageURL(scene.cover_url)"
-                :alt="scene.title"
-                style="width:100%;height:120px;object-fit:cover;border-radius:4px;" />
+              <!-- A background image in a ratio box, the way the scene grid does
+                   it: stretching a small proxy image into a wide box is what made
+                   these look wrong. -->
               <div
-                v-else
-                class="has-background-grey-lighter"
-                style="width:100%;height:120px;display:flex;align-items:center;justify-content:center;border-radius:4px;">
-                <b-icon pack="mdi" icon="image-off-outline" size="is-large" class="has-text-grey" />
+                :style="coverStyle(scene)"
+                style="width:100%;background-size:cover;background-position:center;background-repeat:no-repeat;border-radius:4px;display:flex;align-items:center;justify-content:center;">
+                <b-icon v-if="!scene.cover_url" pack="mdi" icon="image-off-outline" size="is-large" class="has-text-grey" />
               </div>
 
               <p style="margin-top:0.4em;">
@@ -380,14 +377,27 @@ export default {
       try {
         if (url.startsWith('http')) {
           if (url.indexOf('%') === -1) {
-            return '/img/200x/' + encodeURI(url)
+            return '/img/700x/' + encodeURI(url)
           }
-          return '/img/200x/' + encodeURI(decodeURI(url))
+          return '/img/700x/' + encodeURI(decodeURI(url))
         }
       } catch (e) {
         // show the raw URL rather than throwing
       }
       return url
+    },
+    // coverStyle renders a cover as a background image inside a ratio box, the
+    // same approach the scene grid uses, so it is cropped rather than squashed.
+    coverStyle (scene) {
+      const style = {
+        aspectRatio: this.$store.state.optionsWeb.web.sceneCardAspectRatio || '16/9'
+      }
+      if (scene && scene.cover_url) {
+        style.backgroundImage = `url("${this.imageURL(scene.cover_url)}")`
+      } else {
+        style.backgroundColor = '#dbdbdb'
+      }
+      return style
     },
     sceneBoxStyle (group, scene) {
       if (this.selection[group.uid] === scene.id) {
