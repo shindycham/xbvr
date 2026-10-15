@@ -206,6 +206,9 @@ func TestMergeScenesMovesFilesAndHidesTheDuplicate(t *testing.T) {
 
 	file := models.File{SceneID: duplicate.ID, Path: "/media", Filename: "scene.mp4", Type: "video"}
 	db.Create(&file)
+	// A funscript is a file too, and losing it would defeat the point of merging.
+	script := models.File{SceneID: duplicate.ID, Path: "/media", Filename: "scene.funscript", Type: "script"}
+	db.Create(&script)
 
 	merged, touched, err := mergeScenes(db, primary.ID, []uint{duplicate.ID})
 	if err != nil {
@@ -218,11 +221,14 @@ func TestMergeScenesMovesFilesAndHidesTheDuplicate(t *testing.T) {
 		t.Errorf("touched %v, want the primary and the duplicate", touched)
 	}
 
-	// The file must now belong to the primary, or it would vanish from the library.
-	var reloaded models.File
-	db.First(&reloaded, file.ID)
-	if reloaded.SceneID != primary.ID {
-		t.Errorf("file moved to scene %d, want %d", reloaded.SceneID, primary.ID)
+	// The files must now belong to the primary, or they would vanish from the
+	// library: a script is as much a file as the video is.
+	for _, f := range []models.File{file, script} {
+		var reloaded models.File
+		db.First(&reloaded, f.ID)
+		if reloaded.SceneID != primary.ID {
+			t.Errorf("%s moved to scene %d, want %d", f.Filename, reloaded.SceneID, primary.ID)
+		}
 	}
 
 	// The duplicate is hidden, not deleted.
@@ -302,6 +308,8 @@ func TestUnmergeSceneRestoresFilesAndVisibility(t *testing.T) {
 
 	file := models.File{SceneID: duplicate.ID, Path: "/media", Filename: "scene.mp4", Type: "video"}
 	db.Create(&file)
+	script := models.File{SceneID: duplicate.ID, Path: "/media", Filename: "scene.funscript", Type: "script"}
+	db.Create(&script)
 
 	if _, _, err := mergeScenes(db, primary.ID, []uint{duplicate.ID}); err != nil {
 		t.Fatal(err)
@@ -314,11 +322,13 @@ func TestUnmergeSceneRestoresFilesAndVisibility(t *testing.T) {
 		t.Errorf("unmerge reported primary %d, want %d", primaryID, primary.ID)
 	}
 
-	// The file must be back with its original scene.
-	var reloaded models.File
-	db.First(&reloaded, file.ID)
-	if reloaded.SceneID != duplicate.ID {
-		t.Errorf("file belongs to scene %d after undo, want %d", reloaded.SceneID, duplicate.ID)
+	// Both files must be back with their original scene.
+	for _, f := range []models.File{file, script} {
+		var reloaded models.File
+		db.First(&reloaded, f.ID)
+		if reloaded.SceneID != duplicate.ID {
+			t.Errorf("%s belongs to scene %d after undo, want %d", f.Filename, reloaded.SceneID, duplicate.ID)
+		}
 	}
 
 	var dup models.Scene
