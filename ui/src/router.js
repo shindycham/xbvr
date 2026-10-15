@@ -6,6 +6,7 @@ import Scenes from './views/scenes/Scenes'
 import Actors  from './views/actors/Actors'
 import Files from './views/files/Files'
 import Downloads from './views/downloads/Downloads'
+import Duplicates from './views/scenes/Duplicates'
 
 Vue.use(Router)
 
@@ -32,6 +33,11 @@ export default new Router({
       path: '/downloads',
       name: 'downloads',
       component: Downloads
+    },
+    {
+      path: '/duplicates',
+      name: 'duplicates',
+      component: Duplicates
     },
     {
       path: '/options',

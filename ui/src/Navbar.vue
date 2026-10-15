@@ -19,6 +19,9 @@
         {{$t('Downloads')}}
         <b-tag v-if="activeDownloads > 0" type="is-info" rounded style="margin-left:0.4em">{{activeDownloads}}</b-tag>
       </b-navbar-item>
+      <b-navbar-item tag="router-link" :to="{ path: './duplicates' }">
+        {{$t('Duplicates')}}
+      </b-navbar-item>
       <b-navbar-item tag="router-link" :to="{ path: './options' }">
         {{$t('Options')}}
       </b-navbar-item>

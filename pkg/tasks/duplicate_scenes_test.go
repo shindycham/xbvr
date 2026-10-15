@@ -59,6 +59,9 @@ func TestNormaliseDuplicateTitle(t *testing.T) {
 	}
 }
 
+// TestDurationsAgree pins the unit as well as the tolerance: durations are in
+// minutes, so values like 30 are half an hour. A seconds-based slack here would
+// treat a 30 minute scene and a two hour one as the same length.
 func TestDurationsAgree(t *testing.T) {
 	at := func(d ...int) []DuplicateScene {
 		out := make([]DuplicateScene, 0, len(d))
@@ -67,16 +70,19 @@ func TestDurationsAgree(t *testing.T) {
 		}
 		return out
 	}
-	if !durationsAgree(at(1800, 1830)) {
-		t.Error("durations half a minute apart should agree")
+	if !durationsAgree(at(30, 31)) {
+		t.Error("durations a minute apart should agree")
 	}
-	if durationsAgree(at(1800, 5400)) {
+	if durationsAgree(at(30, 32+1)) {
+		t.Error("a four minute difference should not agree")
+	}
+	if durationsAgree(at(30, 140)) {
 		t.Error("a feature and a trailer must not agree")
 	}
-	if durationsAgree(at(1800, 0)) {
+	if durationsAgree(at(30, 0)) {
 		t.Error("one known duration is not agreement")
 	}
-	if !durationsAgree(at(1800, 1800, 1860)) {
+	if !durationsAgree(at(30, 30, 31)) {
 		t.Error("three close durations should agree")
 	}
 }

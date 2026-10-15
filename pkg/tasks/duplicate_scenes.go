@@ -37,15 +37,18 @@ type DuplicateScene struct {
 	Studio      string    `json:"studio"`
 	ScraperID   string    `json:"scraper_id"`
 	ReleaseDate time.Time `json:"release_date"`
-	Duration    int       `json:"duration"`
-	Cast        []string  `json:"cast"`
-	CoverURL    string    `json:"cover_url"`
-	IsHidden    bool      `json:"is_hidden"`
-	FileCount   int       `json:"file_count"`
-	ScriptCount int       `json:"script_count"`
+	// Duration is in minutes, which is how the library stores it and how the
+	// scene card renders it ("{{item.duration}}m"). Sites round it differently,
+	// hence the tolerance in durationsAgree.
+	Duration    int      `json:"duration"`
+	Cast        []string `json:"cast"`
+	CoverURL    string   `json:"cover_url"`
+	IsHidden    bool     `json:"is_hidden"`
+	FileCount   int      `json:"file_count"`
+	ScriptCount int      `json:"script_count"`
 	// MergedInto is set when this scene has already been merged into another,
 	// which is worth showing so the same scene is not merged twice.
-	MergedInto uint `json:"merged_into,omitempty"`
+	MergedInto uint `json:"merged_into"`
 }
 
 // DuplicateGroup is a set of scenes that look like the same scene.
@@ -489,9 +492,12 @@ func durationsAgree(scenes []DuplicateScene) bool {
 			max = d
 		}
 	}
-	// 120 seconds of slack: sites round durations differently, and a trailer is
-	// minutes shorter rather than seconds.
-	return max-min <= 120
+	// Two minutes of slack. Durations are in minutes, not seconds - the scrapers
+	// divide what the site reports by 60 - so anything larger would treat a
+	// 30 minute scene and a two and a half hour one as the same length. Sites
+	// also round differently, and a trailer is minutes shorter rather than
+	// seconds.
+	return max-min <= 2
 }
 
 // MergeScenes combines duplicate scenes into a primary one.
