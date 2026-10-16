@@ -402,14 +402,13 @@ func TestScenesWithoutCastOrRuntimeAreIgnored(t *testing.T) {
 	}
 }
 
-// TestExactMatchIgnoresTitleAndDate makes the change explicit: under the exact
-// rule two scenes are the same scene even when the sites disagree about the
-// title and the date, because cast and runtime are what decide.
-func TestExactMatchIgnoresTitleAndDate(t *testing.T) {
+// TestExactMatchIgnoresTitle keeps the title out of the rule: sites title the
+// same scene differently, and the cast and runtime are what decide.
+func TestExactMatchIgnoresTitle(t *testing.T) {
 	db := openDuplicateTestDB(t)
 
 	a := addScene(t, db, "slr-1", "Midnight Swim", "slr-originals", time.Date(2023, time.October, 14, 0, 0, 0, 0, time.UTC), 30, false)
-	b := addScene(t, db, "vrsmash-1", "Midnight Swim Part One", "vrsmash", time.Date(2020, time.January, 2, 0, 0, 0, 0, time.UTC), 30, false)
+	b := addScene(t, db, "vrsmash-1", "Midnight Swim Part One", "vrsmash", time.Date(2023, time.October, 15, 0, 0, 0, 0, time.UTC), 30, false)
 	addCast(t, db, a, "Jane Doe", "John Smith")
 	addCast(t, db, b, "Jane Doe", "John Smith")
 
@@ -419,5 +418,80 @@ func TestExactMatchIgnoresTitleAndDate(t *testing.T) {
 	}
 	if len(groups) != 1 {
 		t.Fatalf("got %d groups, want 1: %+v", len(groups), groups)
+	}
+}
+
+// TestReleaseDateMustBeWithinADay covers the added half of the rule.
+func TestReleaseDateMustBeWithinADay(t *testing.T) {
+	day := time.Date(2023, time.October, 14, 0, 0, 0, 0, time.UTC)
+
+	// One day apart is a match: sites disagree about the date by a day.
+	db := openDuplicateTestDB(t)
+	a := addScene(t, db, "slr-1", "Midnight Swim", "slr-originals", day, 30, false)
+	b := addScene(t, db, "vrsmash-1", "Midnight Swim", "vrsmash", day.AddDate(0, 0, 1), 30, false)
+	addCast(t, db, a, "Jane Doe", "John Smith")
+	addCast(t, db, b, "Jane Doe", "John Smith")
+
+	groups, err := findDuplicateScenes(db, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 1 {
+		t.Fatalf("dates a day apart should match, got %d groups", len(groups))
+	}
+
+	// Two days apart is not.
+	db2 := openDuplicateTestDB(t)
+	c := addScene(t, db2, "slr-1", "Midnight Swim", "slr-originals", day, 30, false)
+	d := addScene(t, db2, "vrsmash-1", "Midnight Swim", "vrsmash", day.AddDate(0, 0, 2), 30, false)
+	addCast(t, db2, c, "Jane Doe", "John Smith")
+	addCast(t, db2, d, "Jane Doe", "John Smith")
+
+	groups, err = findDuplicateScenes(db2, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 0 {
+		t.Errorf("dates two days apart were treated as the same release: %+v", groups)
+	}
+}
+
+// TestSameCastAndLengthYearsApartIsNotADuplicate guards the date rule's purpose:
+// the same performers in the same length of scene years apart is a series, not a
+// duplicate, and without the date rule it would be grouped.
+func TestSameCastAndLengthYearsApartIsNotADuplicate(t *testing.T) {
+	db := openDuplicateTestDB(t)
+
+	a := addScene(t, db, "slr-1", "Midnight Swim", "slr-originals", time.Date(2020, time.January, 2, 0, 0, 0, 0, time.UTC), 30, false)
+	b := addScene(t, db, "slr-2", "Midnight Swim Again", "slr-originals", time.Date(2023, time.October, 14, 0, 0, 0, 0, time.UTC), 30, false)
+	addCast(t, db, a, "Jane Doe", "John Smith")
+	addCast(t, db, b, "Jane Doe", "John Smith")
+
+	groups, err := findDuplicateScenes(db, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 0 {
+		t.Errorf("scenes years apart were grouped: %+v", groups)
+	}
+}
+
+// TestUnknownReleaseDateIsNotGrouped: with the date now part of the rule, a
+// scene with no date has nothing to compare, and "unknown" must not read as a
+// match.
+func TestUnknownReleaseDateIsNotGrouped(t *testing.T) {
+	db := openDuplicateTestDB(t)
+
+	a := addScene(t, db, "slr-1", "Midnight Swim", "slr-originals", time.Time{}, 30, false)
+	b := addScene(t, db, "vrsmash-1", "Midnight Swim", "vrsmash", time.Time{}, 30, false)
+	addCast(t, db, a, "Jane Doe", "John Smith")
+	addCast(t, db, b, "Jane Doe", "John Smith")
+
+	groups, err := findDuplicateScenes(db, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 0 {
+		t.Errorf("scenes with no release date were grouped: %+v", groups)
 	}
 }

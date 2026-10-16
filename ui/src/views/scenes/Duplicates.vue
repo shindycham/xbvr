@@ -65,7 +65,7 @@
                    these look wrong. -->
               <div
                 :style="coverStyle(scene)"
-                style="width:100%;background-size:cover;background-position:center;background-repeat:no-repeat;border-radius:4px;display:flex;align-items:center;justify-content:center;">
+                style="background-size:cover;background-position:center;background-repeat:no-repeat;border-radius:4px;display:flex;align-items:center;justify-content:center;">
                 <b-icon v-if="!scene.cover_url" pack="mdi" icon="image-off-outline" size="is-large" class="has-text-grey" />
               </div>
 
@@ -390,20 +390,17 @@ export default {
     },
     // coverStyle renders a cover as a background image inside a ratio box, the
     // same approach the scene grid uses, so it is cropped rather than squashed.
+    // coverStyle gives each copy a small fixed thumbnail.
+    //
+    // This page compares two or three copies of one scene, so the cover is a
+    // reference rather than a poster. Letting it fill the column made it huge,
+    // and using the scene-card aspect ratio did the same on a wide card. A fixed
+    // box cannot grow with the card.
     coverStyle (scene) {
-      // The setting is stored as "16:9", which is not a valid CSS aspect-ratio:
-      // CSS wants "16 / 9". Passing the colon form through made the declaration
-      // invalid, so the box had no height at all and nothing was visible.
-      const parts = String(this.$store.state.optionsWeb.web.sceneCardAspectRatio || '16:9').split(':')
-      const ratio = parts.length === 2
-        ? parts[0].trim() + ' / ' + parts[1].trim()
-        : '16 / 9'
-
       const style = {
-        aspectRatio: ratio,
-        // A floor as well, so the box cannot collapse to nothing even if the
-        // ratio is unusable for some reason.
-        minHeight: '140px'
+        width: '220px',
+        maxWidth: '100%',
+        height: '124px'
       }
       if (scene && scene.cover_url) {
         style.backgroundImage = `url("${this.imageURL(scene.cover_url)}")`

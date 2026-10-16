@@ -62,18 +62,24 @@ type DuplicateGroup struct {
 }
 
 // duplicateTextStopWords carry no identifying weight in a scene title.
+// duplicateDateWindow is how far apart two release dates may be and still count
+// as the same release. Sites disagree about a scene's date by a day often enough
+// that requiring an exact match would miss real duplicates.
+const duplicateDateWindow = 24 * time.Hour
+
 // MaxDuplicateGroupSize bounds a group. An exact cast and runtime can still be
 // shared by a series of scenes, and a group nobody can review is not useful.
 const MaxDuplicateGroupSize = 12
 
 // duplicateKey identifies scenes that are the same scene.
 //
-// The rule is exact on purpose: the runtime must be identical and the cast must
-// be identical. Nothing is inferred from a title or a date and there is no
-// confidence to interpret, because looser signals - one performer in common, a
-// title that matched on one word, a missing date compared as though it were a
-// date - produced pairs that were obviously unrelated and made the whole review
-// screen untrustworthy.
+// The rule is exact on purpose: the runtime must be identical, the cast must be
+// identical, and the release dates must fall within a day of each other (see
+// duplicateDateWindow, applied by the caller). Nothing is inferred from a title
+// and there is no confidence to interpret, because looser signals - one
+// performer in common, a title that matched on one word, a missing date compared
+// as though it were a date - produced pairs that were obviously unrelated and
+// made the whole review screen untrustworthy.
 //
 // It reports false for a scene with no runtime or no cast, because "both are
 // unknown" is not a match.
@@ -159,6 +165,12 @@ func findDuplicateScenes(db *gorm.DB, maxGroups int) ([]DuplicateGroup, error) {
 
 	byKey := map[string][]row{}
 	for _, r := range rows {
+		// A scene with no release date cannot be placed in time, and two scenes
+		// with no date are not within a day of each other: treating "unknown" as
+		// a date is what grouped unrelated scenes together before.
+		if r.ReleaseDate.IsZero() {
+			continue
+		}
 		key, ok := duplicateKey(r.Duration, castByScene[r.ID])
 		if !ok {
 			continue
@@ -200,18 +212,43 @@ func findDuplicateScenes(db *gorm.DB, maxGroups int) ([]DuplicateGroup, error) {
 		mergedInto[m.DuplicateSceneID] = m.PrimarySceneID
 	}
 
-	var groups []DuplicateGroup
-	for key, scenes := range byKey {
+	// A key can cover scenes released years apart - the same performers in the
+	// same length of scene is a series as well as a duplicate - so each key is
+	// split into runs of dates within a day of each other.
+	var clusters [][]row
+	for _, scenes := range byKey {
 		if len(scenes) < 2 {
 			continue
 		}
+		sort.Slice(scenes, func(i, j int) bool {
+			return scenes[i].ReleaseDate.Before(scenes[j].ReleaseDate)
+		})
+
+		var current []row
+		flush := func() {
+			if len(current) >= 2 {
+				clusters = append(clusters, append([]row{}, current...))
+			}
+			current = nil
+		}
+		for _, r := range scenes {
+			if len(current) > 0 && r.ReleaseDate.Sub(current[0].ReleaseDate) > duplicateDateWindow {
+				flush()
+			}
+			current = append(current, r)
+		}
+		flush()
+	}
+
+	var groups []DuplicateGroup
+	for _, scenes := range clusters {
 		if len(scenes) > MaxDuplicateGroupSize {
 			scenes = scenes[:MaxDuplicateGroupSize]
 		}
-
 		sort.Slice(scenes, func(i, j int) bool {
 			return scenes[i].ReleaseDate.After(scenes[j].ReleaseDate)
 		})
+		key := ""
 
 		group := DuplicateGroup{
 			Key:    key,
@@ -239,8 +276,26 @@ func findDuplicateScenes(db *gorm.DB, maxGroups int) ([]DuplicateGroup, error) {
 
 		// Score is only used to order the list now: a group with more performers
 		// in common is a stronger coincidence than one with a single name.
-		group.Score = 10 + len(strings.Split(key, "|")) - 1
-		group.Reasons = []string{"identical cast", "identical length"}
+		castCounts := map[string]int{}
+		for _, r := range scenes {
+			seen := map[string]bool{}
+			for _, name := range castByScene[r.ID] {
+				n := strings.ToLower(strings.TrimSpace(name))
+				if n == "" || seen[n] {
+					continue
+				}
+				seen[n] = true
+				castCounts[n]++
+			}
+		}
+		matching := 0
+		for _, n := range castCounts {
+			if n > 1 {
+				matching++
+			}
+		}
+		group.Score = 10 + matching
+		group.Reasons = []string{"identical cast", "identical length", "release date within a day"}
 		groups = append(groups, group)
 	}
 
