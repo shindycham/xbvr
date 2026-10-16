@@ -17,9 +17,30 @@ import (
 
 const vrsmashAPI = "https://www.vrsmash.com/api/content/v1/videos"
 
+// vrsmashCategories are the extra catalog feeds scraped alongside the main one.
+//
+// They are filtered views of the same catalog, not separate content: the trans
+// feed is https://www.vrsmash.com/trans and is served by "category=trans". The
+// main feed does contain these scenes, but sparsely - roughly two items in every
+// thirty-six - so a scrape that only walks the most recent pages would mostly
+// miss them. Walking the feed directly is what makes them reliable.
+//
+// Adding "gay" here is all that is needed for that catalog (397 scenes).
+var vrsmashCategories = []string{"trans"}
+
 // VRSmash scrapes vrsmash.com through its public content API. The catalog is
 // paged (`page` + `sort`), and each scene's detail endpoint provides tags,
 // description and trailer/paid sources.
+// vrsmashFeedURL builds one page of a catalog feed. An empty category is the
+// main feed; "trans" is the feed behind https://www.vrsmash.com/trans.
+func vrsmashFeedURL(page int, category string) string {
+	url := vrsmashAPI + "?page=" + strconv.Itoa(page) + "&sort=latest&limit=36"
+	if category != "" {
+		url += "&category=" + category
+	}
+	return url
+}
+
 func VRSmash(wg *models.ScrapeWG, updateSite bool, knownScenes []string, out chan<- models.ScrapedScene, singleSceneURL string, scraperID string, siteID string, company string, siteURL string, singeScrapeAdditionalInfo string, limitScraping bool, masterSiteId string) error {
 	defer wg.Done()
 	logScrapeStart(scraperID, siteID)
@@ -27,6 +48,19 @@ func VRSmash(wg *models.ScrapeWG, updateSite bool, knownScenes []string, out cha
 	client := resty.New()
 	sem := make(chan struct{}, 6)
 	apiWG := sync.WaitGroup{}
+
+	// A scene can appear in more than one feed, so it is fetched once per run.
+	var seenMu sync.Mutex
+	seen := map[string]bool{}
+	firstSight := func(slug string) bool {
+		seenMu.Lock()
+		defer seenMu.Unlock()
+		if seen[slug] {
+			return false
+		}
+		seen[slug] = true
+		return true
+	}
 
 	fetchJSON := func(url string) gjson.Result {
 		req := client.R().
@@ -163,40 +197,54 @@ func VRSmash(wg *models.ScrapeWG, updateSite bool, knownScenes []string, out cha
 			processScene(slug, gjson.Result{})
 		}
 	} else {
-		page := 1
-		for {
-			url := vrsmashAPI + "?page=" + strconv.Itoa(page) + "&sort=latest&limit=36"
-			list := fetchJSON(url)
-			items := list.Get("data.items")
-			if !items.IsArray() || len(items.Array()) == 0 {
-				break
-			}
-
-			items.ForEach(func(_, it gjson.Result) bool {
-				slug := it.Get("slug").String()
-				if slug == "" {
-					return true
+		// scrapeFeed walks one catalog feed. An empty category is the main one.
+		scrapeFeed := func(category string) {
+			page := 1
+			for {
+				list := fetchJSON(vrsmashFeedURL(page, category))
+				items := list.Get("data.items")
+				if !items.IsArray() || len(items.Array()) == 0 {
+					break
 				}
-				homepage := "https://www.vrsmash.com/video/" + slug + "/"
-				if funk.ContainsString(knownScenes, homepage) {
-					return true
-				}
-				sem <- struct{}{}
-				apiWG.Add(1)
-				go func(s string, item gjson.Result) {
-					defer func() { <-sem }()
-					processScene(s, item)
-				}(slug, it)
-				return true
-			})
 
-			totalPages := int(list.Get("data.pages").Int())
-			if limitScraping || totalPages == 0 || page >= totalPages {
-				break
+				items.ForEach(func(_, it gjson.Result) bool {
+					slug := it.Get("slug").String()
+					if slug == "" {
+						return true
+					}
+					homepage := "https://www.vrsmash.com/video/" + slug + "/"
+					if funk.ContainsString(knownScenes, homepage) {
+						return true
+					}
+					// Already taken from another feed in this run.
+					if !firstSight(slug) {
+						return true
+					}
+					sem <- struct{}{}
+					apiWG.Add(1)
+					go func(s string, item gjson.Result) {
+						defer func() { <-sem }()
+						processScene(s, item)
+					}(slug, it)
+					return true
+				})
+
+				totalPages := int(list.Get("data.pages").Int())
+				if limitScraping || totalPages == 0 || page >= totalPages {
+					break
+				}
+				page++
+				time.Sleep(250 * time.Millisecond)
 			}
-			page++
-			time.Sleep(250 * time.Millisecond)
 		}
+
+		// The extra feeds come first. They are the reason to walk them at all
+		// when scraping is limited, and going first means a limited scrape spends
+		// its pages on them rather than on the main catalog.
+		for _, category := range vrsmashCategories {
+			scrapeFeed(category)
+		}
+		scrapeFeed("")
 	}
 
 	apiWG.Wait()
