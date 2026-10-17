@@ -34,6 +34,11 @@ var tokenCache struct {
 	expiry time.Time
 }
 
+// refreshMu serialises refreshing. The site rotates the refresh token on every
+// use, so two refreshes at once would each invalidate the other's token and one
+// caller would fail for no reason.
+var refreshMu sync.Mutex
+
 func setCachedToken(token string, expiry time.Time) {
 	tokenCache.mu.Lock()
 	tokenCache.atoken = token
@@ -95,7 +100,9 @@ func currentAccessToken() (string, error) {
 	}
 	tokenCache.mu.Unlock()
 
-	jarToken, jar := tokenFromJar()
+	// The jar is re-read by refreshFromStoredToken, which may fall back to the
+	// refresh token stored there.
+	jarToken, _ := tokenFromJar()
 	if tokenValid(jarToken) {
 		if exp, ok := jwtExpiry(jarToken); ok {
 			setCachedToken(jarToken, exp)
@@ -108,6 +115,44 @@ func currentAccessToken() (string, error) {
 	if !config.Config.VRSMashDownloader.AutoRefreshToken {
 		return "", fmt.Errorf("vrsmash session expired (atoken). Open vrsmash.com in your browser, or enable 'keep the session alive' in Options -> VRSmash Downloader")
 	}
+
+	refreshMu.Lock()
+	defer refreshMu.Unlock()
+
+	// Another caller may have refreshed while this one waited.
+	tokenCache.mu.Lock()
+	if tokenCache.atoken != "" && time.Until(tokenCache.expiry) > refreshSafetyWindow {
+		token := tokenCache.atoken
+		tokenCache.mu.Unlock()
+		return token, nil
+	}
+	tokenCache.mu.Unlock()
+
+	return refreshFromStoredToken()
+}
+
+// forceRefreshToken throws away the cached access token and refreshes from the
+// stored refresh token.
+//
+// This is for the case the cache cannot detect: the API rejects a token that
+// xbvr still believed usable. Re-reading the cookie jar would hand back the same
+// rejected token, so the jar is bypassed and the refresh token used directly.
+func forceRefreshToken() (string, error) {
+	refreshMu.Lock()
+	defer refreshMu.Unlock()
+
+	tokenCache.mu.Lock()
+	tokenCache.atoken = ""
+	tokenCache.expiry = time.Time{}
+	tokenCache.mu.Unlock()
+
+	return refreshFromStoredToken()
+}
+
+// refreshFromStoredToken exchanges the stored refresh token for a new pair and
+// persists the rotated one. refreshMu must be held.
+func refreshFromStoredToken() (string, error) {
+	_, jar := tokenFromJar()
 
 	rtoken := strings.TrimSpace(config.Config.VRSMashDownloader.RefreshToken)
 	if rtoken == "" && jar != nil {
@@ -128,6 +173,8 @@ func currentAccessToken() (string, error) {
 		setCachedToken(atoken, time.Now().Add(10*time.Minute))
 	}
 
+	// The rotated token must be persisted: the old one stops working after this
+	// refresh, so losing the new one breaks the chain until it is replaced by hand.
 	if newRtoken != "" && newRtoken != config.Config.VRSMashDownloader.RefreshToken {
 		config.Config.VRSMashDownloader.RefreshToken = newRtoken
 		saveConfig()

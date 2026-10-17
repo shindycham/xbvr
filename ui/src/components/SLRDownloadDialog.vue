@@ -187,8 +187,16 @@ export default {
     },
     async readErrorBody (e) {
       if (e && e.response) {
+        // Read the body once as text: some endpoints answer with a plain-text
+        // error rather than JSON, and showing that beats a bare status code.
         try {
-          return await e.response.json()
+          const text = await e.response.text()
+          if (!text) { return null }
+          try {
+            return JSON.parse(text)
+          } catch (inner) {
+            return { error: text }
+          }
         } catch (inner) {
           return null
         }

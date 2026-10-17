@@ -131,39 +131,68 @@ func CookieHeader() (string, error) {
 
 var httpClient = &http.Client{Timeout: 60 * time.Second}
 
-// apiGet performs an authenticated GET against the content API, refreshing the
-// access token first when automatic refresh is enabled.
+// apiGetWithToken performs one authenticated request and hands the response
+// back for the caller to inspect. The body is left open.
+func apiGetWithToken(path, atoken string) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", UserAgent)
+	req.Header.Set("Accept", "application/json")
+	if jar, err := jarFn(); err == nil {
+		for name, value := range jar {
+			req.AddCookie(&http.Cookie{Name: name, Value: value})
+		}
+	}
+	req.Header.Set("Authorization", "Bearer "+atoken)
+	return httpClient.Do(req)
+}
+
+// apiGet performs an authenticated GET against the content API.
+//
+// When the API rejects the token it is refreshed and the request retried once.
+// That case is the whole point of automatic refresh: a token can go stale
+// without the client being able to tell, and treating it as a hard failure left
+// the user to replace the token by hand even though a valid refresh token was
+// sitting in the settings.
 func apiGet(path string, out interface{}) error {
 	atoken, err := currentAccessToken()
 	if err != nil {
 		return err
 	}
-	jar, _ := jarFn()
 
-	req, err := http.NewRequest(http.MethodGet, path, nil)
+	resp, err := apiGetWithToken(path, atoken)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("User-Agent", UserAgent)
-	req.Header.Set("Accept", "application/json")
-	for name, value := range jar {
-		req.AddCookie(&http.Cookie{Name: name, Value: value})
-	}
-	req.Header.Set("Authorization", "Bearer "+atoken)
 
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return err
+	if resp.StatusCode == http.StatusUnauthorized && config.Config.VRSMashDownloader.AutoRefreshToken {
+		resp.Body.Close()
+
+		fresh, refreshErr := forceRefreshToken()
+		if refreshErr != nil {
+			return fmt.Errorf("vrsmash rejected the session token and refreshing it failed: %w", refreshErr)
+		}
+
+		resp, err = apiGetWithToken(path, fresh)
+		if err != nil {
+			return err
+		}
+		if resp.StatusCode == http.StatusUnauthorized {
+			resp.Body.Close()
+			return fmt.Errorf("vrsmash rejected a just-refreshed session token, so the stored refresh token is probably no longer valid: log in to vrsmash.com and update the refresh token in Options -> VRSmash Downloader")
+		}
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusUnauthorized {
+	switch resp.StatusCode {
+	case http.StatusOK:
+	case http.StatusUnauthorized:
 		return fmt.Errorf("vrsmash session expired (atoken). Open vrsmash.com in your browser, or enable 'keep the session alive' in Options -> VRSmash Downloader")
-	}
-	if resp.StatusCode == http.StatusForbidden {
+	case http.StatusForbidden:
 		return fmt.Errorf("vrsmash blocked the request (HTTP 403, Cloudflare). Make sure Firefox is logged in and its cookies are fresh")
-	}
-	if resp.StatusCode != http.StatusOK {
+	default:
 		return fmt.Errorf("HTTP %d from vrsmash", resp.StatusCode)
 	}
 	return json.NewDecoder(resp.Body).Decode(out)

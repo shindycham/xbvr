@@ -117,7 +117,12 @@ func (i DownloadResource) formats(req *restful.Request, resp *restful.Response) 
 
 	renditions, err := tasks.GetDownloadRenditions(scene)
 	if err != nil {
-		APIError(req, resp, http.StatusBadGateway, err)
+		// A JSON body so the dialog can show the reason. A bare status left the
+		// user staring at "502 Bad Gateway" with no hint that the session had
+		// expired, which is the one case that needs them to do something.
+		resp.WriteHeaderAndEntity(http.StatusBadGateway, map[string]interface{}{
+			"error": err.Error(),
+		})
 		return
 	}
 
